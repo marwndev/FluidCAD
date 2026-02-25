@@ -135,15 +135,18 @@ export class Sketch extends SceneObject implements Extrudable {
       return false;
     }
 
-    const thisChildren = this.getChildren() as GeometrySceneObject[];
-    const otherChildren = other.getChildren() as GeometrySceneObject[];
+    const thisChildren = this.getChildren();
+    const otherChildren = other.getChildren();
 
     if (thisChildren.length !== otherChildren.length) {
       return false;
     }
 
     for (let i = 0; i < thisChildren.length; i++) {
-      if (!thisChildren[i].compareTo(otherChildren[i])) {
+      const thisChild = thisChildren[i];
+      const otherChild = otherChildren[i];
+
+      if (!thisChild.compareTo(otherChild)) {
         return false;
       }
     }

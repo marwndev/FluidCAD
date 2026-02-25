@@ -30,6 +30,7 @@ export class SceneCompare {
       }
       else {
         console.log('NO MATCH:', obj.getUniqueType());
+        break;
       }
     }
 
