@@ -10,6 +10,8 @@ import { GROUP_ACTIVE, buildSystem, readBackPoses, type BodyHandles, type BuiltS
 import { loadSolveSpace, type SolveSpaceApi } from './solvespace-loader.js';
 import type { SolverInput, SolverOutput, SolverResult } from './types.js';
 import {
+  applyCylindricalFixup,
+  applyCylindricalWarmStarts,
   applyFastenedFixup,
   applyFastenedWarmStarts,
   applyRevoluteFixup,
@@ -67,6 +69,15 @@ export class Solver {
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
     });
+    // Cylindrical: like slider but with rotation about Z left free as
+    // well. Drag decomposes into (axial slide, in-plane angle); both
+    // are preserved across solves. The 2 free DOFs are added back to
+    // the reported DOF below.
+    applyCylindricalWarmStarts(input.bodies, input.mates, {
+      draggedInstanceId: input.draggedInstanceId,
+      draggedCursorWorld: input.draggedCursorWorld,
+      draggedGrabLocal: input.draggedGrabLocal,
+    });
     const built = buildSystem(this.api, input);
 
     if (input.draggedInstanceId && input.draggedTargetOrigin) {
@@ -94,12 +105,15 @@ export class Solver {
     // updated B as driver.
     applyRevoluteFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
     applySliderFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
+    applyCylindricalFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
     applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    // Each non-both-grounded revolute / slider mate contributes 1 DOF that
-    // slvs can't see (follower's params are all locked). Add them in so
-    // the footer reads the geometric DOF rather than slvs's accounting.
+    // Each non-both-grounded revolute / slider / cylindrical mate
+    // contributes free DOFs (1, 1, 2 respectively) that slvs can't see
+    // — the followers are JS-side locked. Add them in so the footer
+    // reads the geometric DOF rather than slvs's accounting.
     out.dof += countRevoluteFreeDof(input);
     out.dof += countSliderFreeDof(input);
+    out.dof += countCylindricalFreeDof(input);
     return out;
   }
 
@@ -205,6 +219,23 @@ function countSliderFreeDof(input: SolverInput): number {
     if (!a || !b) continue;
     if (a.grounded && b.grounded) continue;
     extra += 1;
+  }
+  return extra;
+}
+
+/** Sum the free DOF contributed by cylindrical mates (2 per mate where
+ *  at least one of the two bodies is non-grounded). Both-grounded
+ *  cylindricals carry no DOF (immovable pair). */
+function countCylindricalFreeDof(input: SolverInput): number {
+  const byId = new Map(input.bodies.map(b => [b.instanceId, b]));
+  let extra = 0;
+  for (const mate of input.mates) {
+    if (mate.type !== 'cylindrical') continue;
+    const a = byId.get(mate.connectorA.instanceId);
+    const b = byId.get(mate.connectorB.instanceId);
+    if (!a || !b) continue;
+    if (a.grounded && b.grounded) continue;
+    extra += 2;
   }
   return extra;
 }

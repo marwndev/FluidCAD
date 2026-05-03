@@ -17,9 +17,12 @@ export class MateBuilder {
   }
 
   offset(x: number, y: number, z: number): this {
-    if (this.mate.type === "slider" && (x !== 0 || y !== 0)) {
+    if (
+      (this.mate.type === "slider" || this.mate.type === "cylindrical")
+      && (x !== 0 || y !== 0)
+    ) {
       throw new Error(
-        `mate('slider').offset(${x}, ${y}, ${z}) — slider offsets must be along Z (0, 0, d). The slider's free DOF is along the shared Z axis; an XY offset would contradict the on-axis constraint.`,
+        `mate('${this.mate.type}').offset(${x}, ${y}, ${z}) — ${this.mate.type} offsets must be along Z (0, 0, d). The connectors share an axis (PT_ON_LINE along Z); an XY offset would contradict that on-axis constraint.`,
       );
     }
     this.ensureOptions().offset = [x, y, z];

@@ -487,6 +487,277 @@ export function applySliderFixup(
 }
 
 /**
+ * Cylindrical warm-start.
+ *
+ * A cylindrical mate locks 4 of the 6 relative DOFs between two
+ * connectors: origins lie on the same line and both Z axes are
+ * parallel (face-to-face by default; back-to-back on `.flip()`). The
+ * two free DOFs are translation along the shared line **and** rotation
+ * about it. Both `.offset(0, 0, d)` and `.rotate(deg)` are *hints*
+ * (warm-start seeds), not hard constraints — once the user drags the
+ * follower, the running (slide, angle) is preserved across solves.
+ *
+ * Like the other mates, cylindrical is solved JS-side. The follower's
+ * full pose is computed analytically from the driver, the slide value,
+ * and the angle; both `lockPosition` and `lockOrientation` are set on
+ * the follower so slvs treats it as a constant. The 2 free DOFs are
+ * added back into `out.dof` by `Solver.solve()`.
+ *
+ * Per solve:
+ *   1. Pick a driver / follower for each cylindrical mate.
+ *   2. Determine the running (slide, angle):
+ *        - If the mate is currently satisfied (origin on axis line and
+ *          Z parallel/anti-parallel within ε), preserve the current
+ *          values so user-applied drags persist.
+ *        - Otherwise seed at `options.offset.z` / `options.rotate`.
+ *   3. If the dragged body is in the follower's fastened cluster,
+ *      decompose `(cursor - grabWorld)` into:
+ *        - axial component along the driver Z → adds to slide;
+ *        - in-plane rotation about the slid pivot → adds to angle.
+ *      Unlike slider's line-projection (perpendicular cursor motion is
+ *      ignored), cylindrical absorbs perpendicular motion as rotation —
+ *      that's the second DOF.
+ *   4. Recompute the follower's pose so its connector frame meets the
+ *      driver's connector frame at (slide, angle), with `flip` applied.
+ *   5. Lock both position and orientation.
+ *
+ * `applyCylindricalFixup` re-runs step 4 after the solver moves the
+ * driver, propagating drag-of-driver motion to the follower while the
+ * (slide, angle) read back from the warm-started follower pose are
+ * preserved.
+ */
+export type CylindricalDragInfo = {
+  draggedInstanceId?: string;
+  /** Raw cursor world position on the drag plane. */
+  draggedCursorWorld?: Vector3;
+  /** Grab point in body-local frame. */
+  draggedGrabLocal?: Vector3;
+};
+
+const CYLINDRICAL_EPS = 1e-4;
+
+export function applyCylindricalWarmStarts(
+  bodies: BodyState[],
+  mates: MateRecord[],
+  drag: CylindricalDragInfo = {},
+): void {
+  const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
+  const byId = new Map(bodies.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'cylindrical') continue;
+    const aBody = byId.get(mate.connectorA.instanceId);
+    const bBody = byId.get(mate.connectorB.instanceId);
+    if (!aBody || !bBody) continue;
+    const aConn = aBody.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    if (!roles) continue;
+    const { driver, follower, driverConn, followerConn } = roles;
+    const options = mate.options ?? {};
+    const seedSlide = options.offset?.[2] ?? 0;
+    const seedAngle = options.rotate ?? 0;
+
+    let slide: number;
+    let angle: number;
+    if (isCylindricalSatisfied(driver, follower, driverConn, followerConn)) {
+      const state = currentCylindricalState(
+        driver, follower, driverConn, followerConn,
+      );
+      slide = state.slide;
+      angle = state.angle;
+    } else {
+      slide = seedSlide;
+      angle = seedAngle;
+    }
+
+    // Drag-of-cluster: split (cursor - grabWorld) into axial (slide
+    // delta) and in-plane (angle delta) components. The grab point's
+    // world position is computed from the dragged body's pose, so this
+    // works whether the dragged body is the follower itself or another
+    // body fastened to it.
+    if (
+      draggedCursorWorld
+      && draggedGrabLocal
+      && draggedInstanceId
+      && !follower.grounded
+    ) {
+      const cluster = findFastenedCluster(follower.instanceId, mates);
+      if (cluster.has(draggedInstanceId)) {
+        const draggedBody = byId.get(draggedInstanceId);
+        if (draggedBody) {
+          const grabWorld = draggedGrabLocal.clone()
+            .applyQuaternion(draggedBody.quaternion)
+            .add(draggedBody.position);
+          const dOrigin = driverConn.localOrigin.clone()
+            .applyQuaternion(driver.quaternion).add(driver.position);
+          const dZ = driverConn.localNormal.clone()
+            .applyQuaternion(driver.quaternion).normalize();
+
+          const axialDelta = draggedCursorWorld.clone().sub(grabWorld).dot(dZ);
+          slide += axialDelta;
+
+          // After the slide, the grab moves with the body by `axialDelta * dZ`.
+          // Compute the in-plane rotation about the slid pivot that takes
+          // grabAfterSlide → cursor. Same arc-angle formulation as revolute.
+          const grabAfterSlide = grabWorld.clone().addScaledVector(dZ, axialDelta);
+          const pivotAfterSlide = dOrigin.clone().addScaledVector(dZ, slide);
+          const fromVec = grabAfterSlide.clone().sub(pivotAfterSlide);
+          const toVec = draggedCursorWorld.clone().sub(pivotAfterSlide);
+          const fromInPlane = fromVec.clone()
+            .sub(dZ.clone().multiplyScalar(fromVec.dot(dZ)));
+          const toInPlane = toVec.clone()
+            .sub(dZ.clone().multiplyScalar(toVec.dot(dZ)));
+          if (fromInPlane.length() > 1e-9 && toInPlane.length() > 1e-9) {
+            fromInPlane.normalize();
+            toInPlane.normalize();
+            const cos = Math.min(1, Math.max(-1, fromInPlane.dot(toInPlane)));
+            const sin = new Vector3()
+              .crossVectors(fromInPlane, toInPlane).dot(dZ);
+            const angleDeltaRad = Math.atan2(sin, cos);
+            angle += (angleDeltaRad * 180) / Math.PI;
+          }
+        }
+      }
+    }
+
+    const target = computeFastenedTargetPose(driver, driverConn, followerConn, {
+      flip: options.flip,
+      rotate: angle,
+      offset: [0, 0, slide],
+    });
+    follower.position = target.position;
+    follower.quaternion = target.quaternion;
+    follower.lockPosition = true;
+    follower.lockOrientation = true;
+  }
+}
+
+/**
+ * Re-derive each cylindrical follower's pose from the *solved* driver
+ * pose. The (slide, angle) values are read back from the warm-started
+ * follower pose (which was mutated in place), so a drag of the driver
+ * carries the follower along the axis with the same relative offset
+ * and angle.
+ */
+export function applyCylindricalFixup(
+  inputBodies: BodyState[],
+  out: SolvedBody[],
+  mates: MateRecord[],
+  draggedInstanceId?: string,
+): void {
+  const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
+  const outById = new Map(out.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'cylindrical') continue;
+    const aInput = inputById.get(mate.connectorA.instanceId);
+    const bInput = inputById.get(mate.connectorB.instanceId);
+    if (!aInput || !bInput) continue;
+    const aConn = aInput.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    if (!roles) continue;
+    const driverOut = outById.get(roles.driver.instanceId);
+    const followerOut = outById.get(roles.follower.instanceId);
+    if (!driverOut || !followerOut) continue;
+
+    const state = currentCylindricalState(
+      roles.driver, roles.follower, roles.driverConn, roles.followerConn,
+    );
+    const driverState: BodyState = {
+      ...roles.driver,
+      position: driverOut.position,
+      quaternion: driverOut.quaternion,
+    };
+    const target = computeFastenedTargetPose(
+      driverState, roles.driverConn, roles.followerConn,
+      {
+        flip: mate.options?.flip,
+        rotate: state.angle,
+        offset: [0, 0, state.slide],
+      },
+    );
+    followerOut.position = target.position;
+    followerOut.quaternion = target.quaternion;
+  }
+}
+
+/**
+ * True iff the follower's connector origin lies on the driver's
+ * connector Z axis line (perpendicular distance < ε) AND their Z axes
+ * are parallel or anti-parallel within ε. Used to decide whether
+ * (slide, angle) read from the current state are meaningful or we need
+ * to seed from `.offset` / `.rotate`.
+ */
+function isCylindricalSatisfied(
+  driver: BodyState,
+  follower: BodyState,
+  driverConn: ConnectorState,
+  followerConn: ConnectorState,
+): boolean {
+  const dOrigin = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const dZ = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const fOrigin = followerConn.localOrigin.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  const fZ = followerConn.localNormal.clone()
+    .applyQuaternion(follower.quaternion).normalize();
+  const diff = fOrigin.clone().sub(dOrigin);
+  const along = diff.dot(dZ);
+  const perp = diff.clone().sub(dZ.clone().multiplyScalar(along));
+  if (perp.length() > CYLINDRICAL_EPS) return false;
+  return Math.abs(Math.abs(fZ.dot(dZ)) - 1) < CYLINDRICAL_EPS;
+}
+
+/**
+ * Extract the running (slide, angle) of a cylindrical mate from the
+ * current driver/follower poses. `slide` is the signed distance along
+ * the driver's connector Z axis from driver origin to follower origin.
+ * `angle` (degrees) is the rotation about the driver Z that maps
+ * driver's connector X to the follower's connector X (after projecting
+ * follower X into the plane perpendicular to driver Z so that .flip()
+ * doesn't perturb the reading).
+ */
+function currentCylindricalState(
+  driver: BodyState,
+  follower: BodyState,
+  driverConn: ConnectorState,
+  followerConn: ConnectorState,
+): { slide: number; angle: number } {
+  const dOrigin = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const dZ = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const dX = driverConn.localXDirection.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const fOrigin = followerConn.localOrigin.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  const fX = followerConn.localXDirection.clone()
+    .applyQuaternion(follower.quaternion).normalize();
+
+  const slide = fOrigin.clone().sub(dOrigin).dot(dZ);
+
+  // Project follower X into the plane perpendicular to driver Z.
+  // computeFastenedTargetPose re-orthogonalizes targetX against targetZ
+  // (which is ±dZ depending on flip), and dZ is perpendicular to dX, so
+  // the resulting targetX always lies in the dZ-perp plane; reading
+  // the angle there cancels the .flip() sign.
+  const fXInPlane = fX.clone().sub(dZ.clone().multiplyScalar(fX.dot(dZ)));
+  if (fXInPlane.length() < 1e-9) {
+    return { slide, angle: 0 };
+  }
+  fXInPlane.normalize();
+  const cos = Math.min(1, Math.max(-1, fXInPlane.dot(dX)));
+  const sin = new Vector3().crossVectors(dX, fXInPlane).dot(dZ);
+  const angle = (Math.atan2(sin, cos) * 180) / Math.PI;
+  return { slide, angle };
+}
+
+/**
  * True iff the follower's connector origin lies on the driver's connector
  * Z axis line (perpendicular distance < ε). Orientation is intentionally
  * not checked — the slider warm-start always re-imposes orientation from

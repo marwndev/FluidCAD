@@ -9,6 +9,7 @@ import type { MateRecord } from './types.js';
 import { compileFastened } from './mates/fastened.js';
 import { compileRevolute } from './mates/revolute.js';
 import { compileSlider } from './mates/slider.js';
+import { compileCylindrical } from './mates/cylindrical.js';
 
 export const FREE_IN_3D = 0;
 
@@ -53,7 +54,7 @@ const COMPILERS: Record<MateRecord['type'], MateCompiler> = {
   fastened: compileFastened,
   revolute: compileRevolute,
   slider: compileSlider,
-  cylindrical: notYet('cylindrical'),
+  cylindrical: compileCylindrical,
   planar: notYet('planar'),
   parallel: notYet('parallel'),
   'pin-slot': notYet('pin-slot'),
