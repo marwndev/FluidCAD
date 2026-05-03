@@ -16,8 +16,9 @@ function buildHousing(name = "housing"): Part {
   return part(name, () => {
     sketch("xy", () => rect(20, 20));
     extrude(10);
-    connector(select(face().planar().onPlane("xy", 10)));
-    connector(select(face().planar().onPlane("xy", 0)));
+    const top = connector(select(face().planar().onPlane("xy", 10)));
+    const bottom = connector(select(face().planar().onPlane("xy", 0)));
+    return { connectors: { top, bottom } };
   }) as unknown as Part;
 }
 
@@ -101,29 +102,61 @@ describe("assembly scene", () => {
     expect(a.record.name).toBe("housing");
   });
 
-  it("Instance.connectors is an array length-matching part connectors, in source order", () => {
+  it("Instance.connectors is a record keyed by features.connectors names", () => {
     const { p } = startAssemblyWithPart();
     const inst = insert(p);
-    expect(Array.isArray(inst.connectors)).toBe(true);
-    expect(inst.connectors).toHaveLength(2);
-    const [topC, bottomC] = inst.connectors;
-    expect(topC).toBeInstanceOf(BoundConnector);
-    expect(bottomC).toBeInstanceOf(BoundConnector);
+    expect(typeof inst.connectors).toBe("object");
+    expect(Array.isArray(inst.connectors)).toBe(false);
+    expect(Object.keys(inst.connectors).sort()).toEqual(["bottom", "top"]);
+    expect(inst.connectors.top).toBeInstanceOf(BoundConnector);
+    expect(inst.connectors.bottom).toBeInstanceOf(BoundConnector);
   });
 
-  it("each instance.connectors[i] carries the instance's id; two instances produce distinct refs", () => {
+  it("each named connector carries the instance's id; two instances produce distinct refs", () => {
     const { p } = startAssemblyWithPart();
     const a = insert(p);
     const b = insert(p);
-    expect(a.connectors[0].instanceId).toBe(a.record.instanceId);
-    expect(b.connectors[0].instanceId).toBe(b.record.instanceId);
-    expect(a.connectors[0].instanceId).not.toBe(b.connectors[0].instanceId);
+    expect(a.connectors.top.instanceId).toBe(a.record.instanceId);
+    expect(b.connectors.top.instanceId).toBe(b.record.instanceId);
+    expect(a.connectors.top.instanceId).not.toBe(b.connectors.top.instanceId);
     // Same underlying connector, distinct bound refs.
-    expect(a.connectors[0].connector).toBe(b.connectors[0].connector);
+    expect(a.connectors.top.connector).toBe(b.connectors.top.connector);
   });
 
   it("getCurrentScene() returns an AssemblyScene after startAssemblyScene", () => {
     startAssemblyWithPart();
     expect(getCurrentScene()).toBeInstanceOf(AssemblyScene);
+  });
+
+  it("connectors that aren't exposed in features.connectors don't appear on the instance", () => {
+    getSceneManager().startScene();
+    const p = part("hidden", () => {
+      sketch("xy", () => rect(20, 20));
+      extrude(10);
+      // Connector is created but NOT returned in features.connectors.
+      connector(select(face().planar().onPlane("xy", 10)));
+      return { something: "else" };
+    }) as unknown as Part;
+    getSceneManager().startAssemblyScene();
+    const inst = insert(p);
+    // The part still has the connector as a child (it renders), but the
+    // instance's named-map is empty because the part didn't expose it.
+    expect(p.getConnectors()).toHaveLength(1);
+    expect(Object.keys(inst.connectors)).toEqual([]);
+  });
+
+  it("renaming a connector in features.connectors changes the instance key", () => {
+    getSceneManager().startScene();
+    const p = part("housing", () => {
+      sketch("xy", () => rect(20, 20));
+      extrude(10);
+      const onTop = connector(select(face().planar().onPlane("xy", 10)));
+      // Author chose the name "mountTop"; instance.connectors mirrors it.
+      return { connectors: { mountTop: onTop } };
+    }) as unknown as Part;
+    getSceneManager().startAssemblyScene();
+    const inst = insert(p);
+    expect(Object.keys(inst.connectors)).toEqual(["mountTop"]);
+    expect(inst.connectors.mountTop).toBeInstanceOf(BoundConnector);
   });
 });

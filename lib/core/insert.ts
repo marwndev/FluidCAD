@@ -5,7 +5,7 @@ import { Part } from "../features/part.js";
 import { Instance } from "../features/instance.js";
 import { IPart } from "./interfaces.js";
 
-function insert(part: IPart): Instance {
+function insert<P extends IPart>(part: P): Instance<P> {
   const scene = getCurrentScene();
   if (!(scene instanceof AssemblyScene)) {
     throw new Error("insert() can only be used in *.assembly.js files.");
@@ -37,7 +37,7 @@ function insert(part: IPart): Instance {
     sourceLocation: sourceLocation ?? undefined,
   };
   scene.addInstance(record);
-  return new Instance(record);
+  return new Instance<P>(record);
 }
 
 export default insert;
