@@ -67,12 +67,12 @@ describe("assembly scene", () => {
     expect(scene.getInstances()[0].position).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it("Instance has grounded() and name(), but no at() or orient()", () => {
+  it("Instance has grounded(), name(), and at(), but no orient() yet", () => {
     const { p } = startAssemblyWithPart();
     const inst = insert(p);
     expect(typeof inst.grounded).toBe("function");
     expect(typeof inst.name).toBe("function");
-    expect("at" in inst).toBe(false);
+    expect(typeof inst.at).toBe("function");
     expect("orient" in inst).toBe(false);
   });
 

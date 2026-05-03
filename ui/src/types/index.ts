@@ -172,8 +172,27 @@ export type SerializedAssemblyInstance = {
   sourceLocation?: { filePath: string; line: number; column: number };
 };
 
+export type SerializedAssemblyMate = {
+  mateId: string;
+  type: 'fastened' | 'revolute' | 'slider' | 'cylindrical' | 'planar' | 'parallel' | 'pin-slot';
+  connectorA: { instanceId: string; connectorId: string };
+  connectorB: { instanceId: string; connectorId: string };
+  status: 'satisfied' | 'redundant' | 'inconsistent';
+  options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
+  sourceLocation?: { filePath: string; line: number; column: number };
+};
+
 export type SerializedAssembly = {
   instances: SerializedAssemblyInstance[];
+  mates: SerializedAssemblyMate[];
+};
+
+/**
+ * Per-row state used by the parts panel. Augments the server payload with
+ * UI-only fields like in-memory visibility.
+ */
+export type RenderedInstance = SerializedAssemblyInstance & {
+  visible: boolean;
 };
 
 export interface FileItem {

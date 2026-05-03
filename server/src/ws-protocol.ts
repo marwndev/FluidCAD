@@ -95,8 +95,19 @@ export type SerializedAssemblyInstance = {
   sourceLocation?: { filePath: string; line: number; column: number };
 };
 
+export type SerializedAssemblyMate = {
+  mateId: string;
+  type: 'fastened' | 'revolute' | 'slider' | 'cylindrical' | 'planar' | 'parallel' | 'pin-slot';
+  connectorA: { instanceId: string; connectorId: string };
+  connectorB: { instanceId: string; connectorId: string };
+  status: 'satisfied' | 'redundant' | 'inconsistent';
+  options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
+  sourceLocation?: { filePath: string; line: number; column: number };
+};
+
 export type SerializedAssembly = {
   instances: SerializedAssemblyInstance[];
+  mates: SerializedAssemblyMate[];
 };
 
 export type SceneRenderedMessage = {
@@ -172,6 +183,17 @@ export type GotoSourceMessage = {
   column: number;
 };
 
+export type UpdateInsertChainMessage = {
+  type: 'update-insert-chain';
+  sourceLocation: { filePath: string; line: number };
+  edit: {
+    ground?: boolean;
+    name?: string | null;
+    defaultName?: string;
+    at?: [number, number, number] | null;
+  };
+};
+
 export type ServerToExtensionMessage =
   | ReadyMessage
   | InitCompleteMessage
@@ -186,6 +208,7 @@ export type ServerToExtensionMessage =
   | AddBreakpointMessage
   | ClearBreakpointsMessage
   | GotoSourceMessage
+  | UpdateInsertChainMessage
   | ExportCompleteMessage;
 
 // ---------------------------------------------------------------------------

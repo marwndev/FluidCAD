@@ -105,6 +105,29 @@ export async function handleGotoSource(
   editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
 }
 
+export async function handleUpdateInsertChain(
+  client: Client,
+  msg: {
+    sourceLocation: { filePath: string; line: number };
+    edit: codeApi.InsertChainEdit;
+  },
+) {
+  const editor = findEditorForCurrentFile(client);
+  if (!editor) {
+    return;
+  }
+  const doc = editor.document;
+  const result = await codeApi.updateInsertChain(
+    client.serverUrl, doc.getText(), msg.sourceLocation.line, msg.edit, client.logger,
+  );
+  if (!result) {
+    return;
+  }
+  if (await codeApi.replaceDocument(doc, result.newCode)) {
+    client.updateLiveCode(doc.fileName, doc.getText());
+  }
+}
+
 export async function handleSetPickPoints(client: Client, msg: { points: [number, number][]; sourceLocation: { line: number } }) {
   const editor = findEditorForCurrentFile(client);
   if (!editor) {

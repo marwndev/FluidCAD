@@ -3,7 +3,7 @@ import { FIT_PADDING, SceneContext } from './scene/scene-context';
 import { SceneModeManager } from './scene/scene-mode';
 import { buildSceneMesh } from './meshes/mesh-factory';
 import { SceneObjectPart, SceneObjectRender, SerializedAssembly, SubSelection } from './types';
-import { AssemblyController } from './scene/assembly-controller';
+import { AssemblyController, InstanceDragReleaseHandler } from './scene/assembly-controller';
 import { SettingsPanel } from './ui/settings-panel';
 import { CentroidIndicator } from './scene/centroid-indicator';
 import { viewerSettings } from './scene/viewer-settings';
@@ -51,17 +51,34 @@ export class Viewer {
   isRegionPicking = false;
   isBezierDrawing = false;
 
-  private selectionHandler: ((shapeId: string | null, sub: SubSelection) => void) | null = null;
+  private selectionHandler: ((shapeId: string | null, sub: SubSelection, instanceId: string | null) => void) | null = null;
   private centroidIndicator = new CentroidIndicator();
-  private hoverState: { shapeId: string; sub: SubSelection } | null = null;
+  private hoverState: { shapeId: string; sub: SubSelection; instanceId: string | null } | null = null;
   private hoverFaceOverlayMeshes: Mesh[] = [];
+  /**
+   * Identifies the assembly instance whose geometry was last selected. Stored
+   * as an id (not a Group reference) so it stays valid across diff updates
+   * that may replace the underlying Three.js objects. Null in part-design
+   * scenes and when nothing is selected.
+   */
+  private highlightedInstanceId: string | null = null;
   private hoverRafId: number | null = null;
   private isMouseDown = false;
+  /**
+   * After a drag-release inside the assembly controller, the cursor sits
+   * on the just-dropped part. We don't want hover to instantly re-paint
+   * its face. Track the dropped instance id and suppress hover that lands
+   * on it; clear the suppression as soon as the cursor moves to a
+   * different instance or to empty space (i.e. the user "let go" of the
+   * part with their cursor too).
+   */
+  private hoverSuppressForInstance: string | null = null;
   private highlightedSub: SubSelection = null;
   private activeSketchId: string | null = null;
   private hiddenShapeIds = new Set<string>();
   private shapeOpacities = new Map<string, number>();
   private assemblyController: AssemblyController | null = null;
+  private pendingDragReleaseHandler: InstanceDragReleaseHandler | null = null;
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId)!;
@@ -92,7 +109,7 @@ export class Viewer {
     return this.sceneObjects;
   }
 
-  setSelectionHandler(fn: (shapeId: string | null, sub: SubSelection) => void): void {
+  setSelectionHandler(fn: (shapeId: string | null, sub: SubSelection, instanceId: string | null) => void): void {
     this.selectionHandler = fn;
   }
 
@@ -110,6 +127,29 @@ export class Viewer {
       if (!this.selectionHandler || this.isTrimming || this.isRegionPicking || this.isBezierDrawing || this.modeManager.isSketchMode) {
         return;
       }
+      // A click on a draggable part (whether the cursor moved or not)
+      // shouldn't double as a face-selection click — otherwise a drop
+      // leaves a stray face/edge highlight on the part. Clear any
+      // pre-existing highlight too in case it was set by an earlier click.
+      const droppedInstanceId = this.assemblyController?.consumeRecentDrag();
+      if (droppedInstanceId) {
+        this.clearHighlight();
+        this.clearHover();
+        // The parts panel may have called assemblyController.highlightInstance
+        // earlier (whole-instance tint via assemblyOriginalColor); viewer's
+        // clearHighlight only handles selection/hover overlays, so clear the
+        // controller's own tint too.
+        this.assemblyController?.clearHighlight();
+        // Suppress hover on the part the user just dropped — they're still
+        // over it, and re-painting its face on the next mousemove would
+        // look like the highlight didn't clear. Cleared in updateHover as
+        // soon as the cursor moves to a different instance or empty space.
+        this.hoverSuppressForInstance = droppedInstanceId;
+        if (this.selectionHandler) {
+          this.selectionHandler(null, null, null);
+        }
+        return;
+      }
       const dx = e.clientX - downX;
       const dy = e.clientY - downY;
       if (dx * dx + dy * dy > 64) {
@@ -119,18 +159,46 @@ export class Viewer {
       this.clearHover();
       const result = this.pickAt(e.clientX, e.clientY);
       if (result) {
-        this.selectionHandler(result.shapeId, result.sub);
+        this.selectionHandler(result.shapeId, result.sub, result.instanceId);
       } else {
-        this.selectionHandler(null, null);
+        this.selectionHandler(null, null, null);
       }
     });
   }
 
+  /** Walk up parents looking for an `instanceId` user-data marker. */
+  private findInstanceIdForObject(obj: Object3D): string | null {
+    let cur: Object3D | null = obj;
+    while (cur) {
+      const id = cur.userData?.instanceId;
+      if (typeof id === 'string') {
+        return id;
+      }
+      cur = cur.parent;
+    }
+    return null;
+  }
+
+  /**
+   * Resolves an instance scope to a traversal root. Returns the live
+   * controller-owned Group when the id is known, the whole scene when no id
+   * is given, and null when the id was given but no longer exists (caller
+   * should treat as "nothing to highlight").
+   */
+  private resolveScope(instanceId: string | null | undefined): Object3D | null {
+    if (!instanceId) {
+      return this.ctx.scene;
+    }
+    return this.assemblyController?.getInstanceGroup(instanceId) ?? null;
+  }
+
   /**
    * Client-side raycaster picking across all shapes.  Returns the closest
-   * front-facing face or edge hit together with its shapeId.
+   * front-facing face or edge hit together with its shapeId, plus the
+   * assembly instance id if the hit was inside one (so callers can scope
+   * highlight traversals to that single instance).
    */
-  private pickAt(clientX: number, clientY: number): { shapeId: string; sub: SubSelection } | null {
+  private pickAt(clientX: number, clientY: number): { shapeId: string; sub: SubSelection; instanceId: string | null } | null {
     const camera = this.ctx.camera;
     const rect = this.ctx.renderer.domElement.getBoundingClientRect();
     const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -201,7 +269,11 @@ export class Viewer {
         const edgeIndex = edgeHit.object.userData.edgeIndex as number;
         const shapeId = this.findShapeIdForObject(edgeHit.object);
         if (shapeId) {
-          return { shapeId, sub: { type: 'edge', index: edgeIndex } };
+          return {
+            shapeId,
+            sub: { type: 'edge', index: edgeIndex },
+            instanceId: this.findInstanceIdForObject(edgeHit.object),
+          };
         }
       }
     }
@@ -217,7 +289,11 @@ export class Viewer {
       }
       const shapeId = this.findShapeIdForObject(bestFace.object);
       if (shapeId) {
-        return { shapeId, sub: { type: 'face', index: faceIndex } };
+        return {
+          shapeId,
+          sub: { type: 'face', index: faceIndex },
+          instanceId: this.findInstanceIdForObject(bestFace.object),
+        };
       }
     }
 
@@ -252,9 +328,13 @@ export class Viewer {
     this.ctx.renderer.domElement.style.cursor = '';
 
     this.removeCompiledMesh();
+    // Detach the assembly controller's group from the scene but keep its
+    // instance state so a part → assembly → part round-trip preserves the
+    // poses the user dragged. The controller's clear() is reserved for
+    // genuine assembly teardown (handled inside updateAssemblyView when the
+    // file changes — see clearAssemblyState).
     if (this.assemblyController) {
       const container = this.assemblyController.getContainer();
-      this.assemblyController.clear();
       if (container.parent) {
         container.parent.remove(container);
       }
@@ -314,6 +394,27 @@ export class Viewer {
     this.ctx.requestRender();
   }
 
+  highlightInstance(instanceId: string): void {
+    this.assemblyController?.highlightInstance(instanceId, themeColors.highlightColor.getHex());
+  }
+
+  clearInstanceHighlight(): void {
+    this.assemblyController?.clearHighlight();
+  }
+
+  setInstanceVisibility(instanceId: string, visible: boolean): void {
+    this.assemblyController?.setInstanceVisible(instanceId, visible);
+  }
+
+  isInstanceVisible(instanceId: string): boolean {
+    return this.assemblyController?.isInstanceVisible(instanceId) ?? true;
+  }
+
+  setInstanceDragReleaseHandler(handler: InstanceDragReleaseHandler | null): void {
+    this.pendingDragReleaseHandler = handler;
+    this.assemblyController?.setDragReleaseHandler(handler);
+  }
+
   updateAssemblyView(sceneObjects: SceneObjectRender[], assembly: SerializedAssembly): void {
     this.sceneObjects = sceneObjects;
     this.highlightedShapeId = null;
@@ -332,7 +433,28 @@ export class Viewer {
         this.ctx.renderer,
         this.ctx.camera,
         () => this.ctx.requestRender(),
+        (ndcX, ndcY) => this.ctx.createPickingRaycaster(ndcX, ndcY),
       );
+      this.assemblyController.setDragReleaseHandler(this.pendingDragReleaseHandler);
+      // When the controller claims a drag, eagerly clear any face/edge/instance
+      // highlight that was set earlier (e.g. by a prior click or parts-panel
+      // row). Otherwise it would visually "stick" through the drag and the
+      // user would see the just-dropped part still highlighted.
+      this.assemblyController.setDragClaimHandler(() => {
+        // Cancel any hover RAF that was scheduled by a mousemove fired
+        // before the drag began — otherwise its callback runs mid-drag and
+        // paints a face overlay on the part we're currently dragging.
+        if (this.hoverRafId !== null) {
+          cancelAnimationFrame(this.hoverRafId);
+          this.hoverRafId = null;
+        }
+        this.clearHighlight();
+        this.clearHover();
+        this.assemblyController?.clearHighlight();
+        if (this.selectionHandler) {
+          this.selectionHandler(null, null, null);
+        }
+      });
     }
     const container = this.assemblyController.getContainer();
     if (!container.parent) {
@@ -354,14 +476,17 @@ export class Viewer {
     this.ctx.requestRender();
   }
 
-  highlightShape(shapeId: string): void {
+  highlightShape(shapeId: string, instanceId: string | null = null): void {
     this.clearHighlight();
 
     const part = this.findShapeById(shapeId);
     if (!part) return;
 
-    const group = this.findMeshByShapeId(shapeId);
+    const scope = this.resolveScope(instanceId);
+    if (!scope) return;
+    const group = this.findMeshByShapeId(shapeId, scope);
     if (!group) return;
+    this.highlightedInstanceId = instanceId;
 
     const isFaceHighlight = part.shapeType === 'solid' || part.shapeType === 'face';
 
@@ -428,13 +553,17 @@ export class Viewer {
 
     this.highlightedShapeId = null;
     this.highlightedSub = null;
+    this.highlightedInstanceId = null;
     this.ctx.render();
   }
 
-  highlightFace(shapeId: string, faceIndex: number): void {
+  highlightFace(shapeId: string, faceIndex: number, instanceId: string | null = null): void {
     this.clearHighlight();
 
-    this.ctx.scene.traverse((obj) => {
+    const scope = this.resolveScope(instanceId);
+    if (!scope) return;
+    this.highlightedInstanceId = instanceId;
+    scope.traverse((obj) => {
       if (!(obj as Mesh).isMesh) {
         return;
       }
@@ -502,10 +631,13 @@ export class Viewer {
     this.ctx.render();
   }
 
-  highlightEdge(shapeId: string, edgeIndex: number): void {
+  highlightEdge(shapeId: string, edgeIndex: number, instanceId: string | null = null): void {
     this.clearHighlight();
 
-    this.ctx.scene.traverse((obj) => {
+    const scope = this.resolveScope(instanceId);
+    if (!scope) return;
+    this.highlightedInstanceId = instanceId;
+    scope.traverse((obj) => {
       if (!(obj as LineSegments).isLine) {
         return;
       }
@@ -546,6 +678,9 @@ export class Viewer {
 
     canvas.addEventListener('mousedown', () => {
       this.isMouseDown = true;
+      // A new gesture: the user explicitly clicked on something, so any
+      // post-drop hover suppression no longer applies.
+      this.hoverSuppressForInstance = null;
       this.clearHover();
     });
 
@@ -555,6 +690,13 @@ export class Viewer {
 
     canvas.addEventListener('mousemove', (e) => {
       if (this.isMouseDown || this.isTrimming || this.isRegionPicking || this.isBezierDrawing || this.modeManager.isSketchMode) {
+        return;
+      }
+      // Authoritative drag-active gate. `isMouseDown` above is mouse-event
+      // derived; the browser sometimes suppresses compatibility mouse events
+      // (touch/pen, palm rejection, fast input). The pointer-event-driven
+      // controller state is reliable, so we always consult it.
+      if (this.assemblyController?.isDragGestureActive()) {
         return;
       }
       if (this.hoverRafId !== null) {
@@ -575,14 +717,35 @@ export class Viewer {
     if (!this.selectionHandler) {
       return;
     }
+    // A hover RAF can be scheduled by a mousemove that fired *before* a
+    // drag began; the callback then runs mid-drag. Re-check authoritative
+    // state here so a stale RAF can't paint a face overlay onto the part
+    // we're currently dragging.
+    if (this.isMouseDown || this.assemblyController?.isDragGestureActive()) {
+      return;
+    }
 
     const result = this.pickAt(clientX, clientY);
 
-    // Same as current hover — skip.
+    // Per-instance post-drop suppression: if the user just released the
+    // drag and their cursor is still on the dropped instance, don't paint
+    // hover on it. As soon as they move to a different instance or off
+    // any instance entirely, the suppression lifts.
+    if (this.hoverSuppressForInstance) {
+      if (result && result.instanceId === this.hoverSuppressForInstance) {
+        if (this.hoverState) this.clearHover();
+        return;
+      }
+      this.hoverSuppressForInstance = null;
+    }
+
+    // Same as current hover — skip. Include instance id so two instances of
+    // the same part don't dedupe against each other.
     if (this.hoverState && result &&
         this.hoverState.shapeId === result.shapeId &&
         this.hoverState.sub?.type === result.sub?.type &&
-        this.hoverState.sub?.index === result.sub?.index) {
+        this.hoverState.sub?.index === result.sub?.index &&
+        this.hoverState.instanceId === result.instanceId) {
       return;
     }
 
@@ -594,10 +757,11 @@ export class Viewer {
       return;
     }
 
-    // Don't hover-highlight the currently selected face/edge.
+    // Don't hover-highlight the currently selected face/edge (same instance).
     if (this.highlightedShapeId === result.shapeId &&
         this.highlightedSub?.type === result.sub?.type &&
-        this.highlightedSub?.index === result.sub?.index) {
+        this.highlightedSub?.index === result.sub?.index &&
+        this.highlightedInstanceId === result.instanceId) {
       if (this.hoverState) {
         this.clearHover();
       }
@@ -605,13 +769,13 @@ export class Viewer {
     }
 
     this.clearHover();
-    this.hoverState = result;
+    this.hoverState = { shapeId: result.shapeId, sub: result.sub, instanceId: result.instanceId };
     this.ctx.renderer.domElement.style.cursor = 'pointer';
 
     if (result.sub?.type === 'face') {
-      this.applyHoverFace(result.shapeId, result.sub.index);
+      this.applyHoverFace(result.shapeId, result.sub.index, result.instanceId);
     } else if (result.sub?.type === 'edge') {
-      this.applyHoverEdge(result.shapeId, result.sub.index);
+      this.applyHoverEdge(result.shapeId, result.sub.index, result.instanceId);
     }
   }
 
@@ -641,8 +805,10 @@ export class Viewer {
     this.ctx.requestRender();
   }
 
-  private applyHoverFace(shapeId: string, faceIndex: number): void {
-    this.ctx.scene.traverse((obj) => {
+  private applyHoverFace(shapeId: string, faceIndex: number, instanceId: string | null): void {
+    const scope = this.resolveScope(instanceId);
+    if (!scope) return;
+    scope.traverse((obj) => {
       if (!(obj as Mesh).isMesh) {
         return;
       }
@@ -708,8 +874,10 @@ export class Viewer {
     this.ctx.requestRender();
   }
 
-  private applyHoverEdge(shapeId: string, edgeIndex: number): void {
-    this.ctx.scene.traverse((obj) => {
+  private applyHoverEdge(shapeId: string, edgeIndex: number, instanceId: string | null): void {
+    const scope = this.resolveScope(instanceId);
+    if (!scope) return;
+    scope.traverse((obj) => {
       if (!(obj as LineSegments).isLine) {
         return;
       }
@@ -816,9 +984,9 @@ export class Viewer {
     return undefined;
   }
 
-  private findMeshByShapeId(shapeId: string): Object3D | undefined {
+  private findMeshByShapeId(shapeId: string, scope: Object3D): Object3D | undefined {
     let result: Object3D | undefined;
-    this.ctx.scene.traverse((child) => {
+    scope.traverse((child) => {
       if (child.userData.shapeId === shapeId) {
         result = child;
       }

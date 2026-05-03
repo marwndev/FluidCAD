@@ -19,4 +19,9 @@ export class Instance {
     this.record.name = value;
     return this;
   }
+
+  at(x: number, y: number, z: number): this {
+    this.record.position = { x, y, z };
+    return this;
+  }
 }

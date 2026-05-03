@@ -2,6 +2,9 @@ import { Viewer } from './viewer';
 import { ShapePropertiesModal } from './ui/shape-properties-modal';
 import { SelectionInfoOverlay } from './ui/selection-info-overlay';
 import { TimelinePanel } from './ui/timeline-panel';
+import { PartsPanel } from './ui/parts-panel';
+import { JointsPanel } from './ui/joints-panel';
+import { DofStatus } from './ui/dof-status';
 import { ExportDialog } from './ui/export-dialog';
 import { BreakpointIndicator } from './ui/breakpoint-indicator';
 import { ErrorBanner } from './ui/error-banner';
@@ -13,7 +16,7 @@ import { captureScreenshot } from './screenshot';
 import { Mesh, Object3D } from 'three';
 import { SnapManager } from './snapping/snap-manager';
 import { SnapController } from './snapping/snap-controller';
-import { SceneObjectRender, PlaneData } from './types';
+import { SceneObjectRender, PlaneData, RenderedInstance, SerializedAssembly } from './types';
 import { onThemeChange } from './scene/theme-colors';
 import { loadPreferences } from './preferences';
 import { applyPreferences } from './scene/viewer-settings';
@@ -23,11 +26,16 @@ installVSCodeKeyboardBridge();
 
 const container = document.getElementById('fluidcad-viewer') || document.body;
 
+let pendingShowBuildTimings = false;
+
 loadPreferences().then((prefs) => {
   if (prefs) {
     document.documentElement.setAttribute('data-theme', prefs.theme);
     applyPreferences(prefs);
-    timelinePanel.setShowBuildTimings(!!prefs.showBuildTimings);
+    pendingShowBuildTimings = !!prefs.showBuildTimings;
+    if (currentRail?.kind === 'part') {
+      currentRail.timeline.setShowBuildTimings(pendingShowBuildTimings);
+    }
   }
 });
 
@@ -89,16 +97,175 @@ const errorBanner = new ErrorBanner(container, (loc) => {
     body: JSON.stringify(loc),
   }).catch((err) => console.error('Goto source failed:', err));
 });
-const timelinePanel = new TimelinePanel(
-  container,
-  (shapeId) => viewer.highlightShape(shapeId),
-  (shapeIds) => exportDialog.show(shapeIds),
-  (shapeId, visible) => viewer.setShapeVisibility(shapeId, visible),
-  (shapeId) => viewer.isShapeHidden(shapeId),
-  (shapeId, opacity) => viewer.setShapeTransparency(shapeId, opacity),
-  (shapeId) => viewer.getShapeTransparency(shapeId),
-  () => viewer.resetAllTransparency(),
-);
+// ---------------------------------------------------------------------------
+// Left-rail abstraction. The same DOM container hosts either the part-design
+// rail (TimelinePanel, History+Shapes) or the assembly rail
+// (PartsPanel + JointsPanel + DofStatus). `ensureRailFor(kind)` swaps them
+// when the current scene's `sceneKind` changes.
+// ---------------------------------------------------------------------------
+
+type LeftRail =
+  | { kind: 'part'; timeline: TimelinePanel }
+  | { kind: 'assembly'; parts: PartsPanel; joints: JointsPanel; dof: DofStatus; instanceVisibility: Map<string, boolean> };
+
+let currentRail: LeftRail | null = null;
+
+const importBtnContainerRef: { el: HTMLDivElement | null } = { el: null };
+
+function disposeRail(): void {
+  if (!currentRail) return;
+  if (currentRail.kind === 'part') {
+    currentRail.timeline.dispose();
+  } else if (currentRail.kind === 'assembly') {
+    currentRail.parts.dispose();
+    currentRail.joints.dispose();
+    currentRail.dof.hide();
+  }
+  currentRail = null;
+}
+
+function buildPartRail(): LeftRail {
+  const timeline = new TimelinePanel(
+    container,
+    (shapeId) => viewer.highlightShape(shapeId),
+    (shapeIds) => exportDialog.show(shapeIds),
+    (shapeId, visible) => viewer.setShapeVisibility(shapeId, visible),
+    (shapeId) => viewer.isShapeHidden(shapeId),
+    (shapeId, opacity) => viewer.setShapeTransparency(shapeId, opacity),
+    (shapeId) => viewer.getShapeTransparency(shapeId),
+    () => viewer.resetAllTransparency(),
+  );
+  timeline.setShowBuildTimings(pendingShowBuildTimings);
+  return { kind: 'part', timeline };
+}
+
+function buildAssemblyRail(): LeftRail {
+  const visibility = new Map<string, boolean>();
+  const parts = new PartsPanel(
+    container,
+    (id) => viewer.highlightInstance(id),
+    (id, visible) => {
+      visibility.set(id, visible);
+      viewer.setInstanceVisibility(id, visible);
+    },
+    (id) => {
+      const inst = findInstance(id);
+      if (inst?.sourceLocation) {
+        gotoSource(inst.sourceLocation);
+      }
+    },
+    (id) => {
+      const inst = findInstance(id);
+      if (!inst?.sourceLocation) return;
+      updateInsertChain(inst.sourceLocation, { ground: true });
+    },
+    (id, newName) => {
+      const inst = findInstance(id);
+      if (!inst?.sourceLocation) return;
+      updateInsertChain(inst.sourceLocation, {
+        name: newName,
+        defaultName: defaultNameFor(inst),
+      });
+    },
+    (_id) => {
+      // Delete-instance source rewrite needs to remove the whole insert(...)
+      // call plus any mates referencing it. Out of scope for phase 04;
+      // wire the action through but show a placeholder for now.
+      console.warn('Delete instance not implemented yet');
+    },
+  );
+  const joints = new JointsPanel(
+    parts.getJointsHost(),
+    (_id) => { /* phase 06+ */ },
+    (id) => {
+      const mate = findMate(id);
+      if (mate?.sourceLocation) {
+        gotoSource(mate.sourceLocation);
+      }
+    },
+    (_id) => { /* phase 06+ */ },
+    (_id) => { /* phase 06+ */ },
+  );
+  const dof = new DofStatus(container, (_mateId) => { /* phase 05+ */ });
+  dof.show();
+  return { kind: 'assembly', parts, joints, dof, instanceVisibility: visibility };
+}
+
+function ensureRailFor(kind: 'part' | 'assembly'): LeftRail {
+  if (currentRail?.kind === kind) {
+    return currentRail;
+  }
+  disposeRail();
+  currentRail = kind === 'assembly' ? buildAssemblyRail() : buildPartRail();
+  if (importBtnContainerRef.el) {
+    importBtnContainerRef.el.classList.toggle('hidden', kind === 'assembly');
+  }
+  return currentRail;
+}
+
+let lastAssemblyPayload: SerializedAssembly | null = null;
+
+function findInstance(instanceId: string) {
+  return lastAssemblyPayload?.instances.find(i => i.instanceId === instanceId);
+}
+
+function findMate(mateId: string) {
+  return lastAssemblyPayload?.mates.find(m => m.mateId === mateId);
+}
+
+function defaultNameFor(inst: { partName: string; instanceId: string }): string {
+  // The part-side default name; matches `Part.partName`. Used so that
+  // renaming back to the original drops the `.name(...)` chained call.
+  return inst.partName;
+}
+
+async function gotoSource(loc: { filePath: string; line: number; column: number }): Promise<void> {
+  try {
+    await fetch('/api/code/goto-source', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(loc),
+    });
+  } catch (err) {
+    console.error('Goto source failed:', err);
+  }
+}
+
+async function updateInsertChain(
+  sourceLocation: { filePath: string; line: number },
+  edit: {
+    ground?: boolean;
+    name?: string | null;
+    defaultName?: string;
+    at?: [number, number, number] | null;
+  },
+): Promise<void> {
+  try {
+    await fetch('/api/update-insert-chain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceLocation, edit }),
+    });
+  } catch (err) {
+    console.error('Update insert chain failed:', err);
+  }
+}
+
+function applyAssemblyToRail(rail: LeftRail & { kind: 'assembly' }, assembly: SerializedAssembly, absPath: string): void {
+  lastAssemblyPayload = assembly;
+  // Prune visibility entries for instances that no longer exist.
+  for (const id of [...rail.instanceVisibility.keys()]) {
+    if (!assembly.instances.find(i => i.instanceId === id)) {
+      rail.instanceVisibility.delete(id);
+    }
+  }
+  const rendered: RenderedInstance[] = assembly.instances.map(i => ({
+    ...i,
+    visible: rail.instanceVisibility.get(i.instanceId) ?? true,
+  }));
+  rail.parts.update(rendered, absPath);
+  rail.joints.update(assembly.mates, rendered);
+}
 
 shapePropertiesModal.setOpenHandler(() => {
   viewer.clearHighlight();
@@ -113,14 +280,22 @@ shapePropertiesModal.setCentroidHandler((centroid) => {
   }
 });
 
-viewer.setSelectionHandler((shapeId, sub) => {
+viewer.setInstanceDragReleaseHandler((instanceId, position) => {
+  const inst = findInstance(instanceId);
+  if (!inst?.sourceLocation) return;
+  updateInsertChain(inst.sourceLocation, {
+    at: [position.x, position.y, position.z],
+  });
+});
+
+viewer.setSelectionHandler((shapeId, sub, instanceId) => {
   if (shapeId) {
     if (shapePropertiesModal.isOpen) {
-      viewer.highlightShape(shapeId);
+      viewer.highlightShape(shapeId, instanceId);
     } else if (sub?.type === 'face') {
-      viewer.highlightFace(shapeId, sub.index);
+      viewer.highlightFace(shapeId, sub.index, instanceId);
     } else if (sub?.type === 'edge') {
-      viewer.highlightEdge(shapeId, sub.index);
+      viewer.highlightEdge(shapeId, sub.index, instanceId);
     } else {
       viewer.clearHighlight();
     }
@@ -803,6 +978,7 @@ function deactivateBezierDrawMode() {
 
 const importBtn = document.createElement('div');
 importBtn.className = 'absolute bottom-6 left-6 z-[100]';
+importBtnContainerRef.el = importBtn;
 importBtn.innerHTML = `
   <button class="btn btn-ghost btn-square btn-sm text-base-content/60" title="Import File">
     <span class="[&>svg]:size-5">${ICON_FILE_IMPORT}</span>
@@ -934,9 +1110,10 @@ function connectWebSocket() {
       case 'scene-rendered': {
         hideLoading();
         const isRollback = msg.rollbackStop != null && msg.rollbackStop < msg.result.length - 1;
+        const sceneKind: 'part' | 'assembly' = msg.sceneKind === 'assembly' ? 'assembly' : 'part';
         viewer.isTrimming = !isRollback && trimPickState === 'picking-active';
         viewer.isBezierDrawing = !isRollback && isBezierDrawingScene(msg.result);
-        if (msg.sceneKind === 'assembly' && msg.assembly) {
+        if (sceneKind === 'assembly' && msg.assembly) {
           viewer.updateAssemblyView(msg.result, msg.assembly);
         } else {
           viewer.updateView(msg.result, isRollback, msg.rollbackStop);
@@ -953,7 +1130,17 @@ function connectWebSocket() {
           updateRegionPickMode(msg.result);
           updateBezierDrawMode(msg.result);
         }
-        timelinePanel.update(msg.result, msg.rollbackStop ?? msg.result.length - 1, msg.absPath);
+        const rail = ensureRailFor(sceneKind);
+        if (rail.kind === 'part') {
+          rail.timeline.update(msg.result, msg.rollbackStop ?? msg.result.length - 1, msg.absPath);
+        } else {
+          const raw = msg.assembly;
+          const assembly: SerializedAssembly = {
+            instances: raw?.instances ?? [],
+            mates: raw?.mates ?? [],
+          };
+          applyAssemblyToRail(rail, assembly, msg.absPath ?? '');
+        }
         errorBanner.update(msg.result, msg.compileError ?? null);
         // Only update the breakpoint indicator when the server sends an
         // authoritative value — rollback responses don't re-run the module,

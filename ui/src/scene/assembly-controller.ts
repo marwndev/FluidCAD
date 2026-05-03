@@ -1,4 +1,4 @@
-import { Camera, Group, Object3D, Plane, Quaternion, Raycaster, Vector2, Vector3, WebGLRenderer } from 'three';
+import { Box3, Camera, Group, Object3D, Plane, Quaternion, Raycaster, Vector2, Vector3, WebGLRenderer } from 'three';
 import { SceneObjectRender, SerializedAssembly, SerializedAssemblyInstance } from '../types';
 import { buildObjectMesh } from '../meshes/mesh-factory';
 
@@ -9,11 +9,30 @@ type InstanceState = {
   group: Group;
 };
 
+export type InstanceDragReleaseHandler = (
+  instanceId: string,
+  position: { x: number; y: number; z: number },
+) => void;
+
+export type InstanceDragClaimHandler = () => void;
+
 export class AssemblyController {
   private container = new Group();
   private instances = new Map<string, InstanceState>();
   private partTemplates = new Map<string, SceneObjectRender>();
   private allObjects: SceneObjectRender[] = [];
+  private dragReleaseHandler: InstanceDragReleaseHandler | null = null;
+  private dragClaimHandler: InstanceDragClaimHandler | null = null;
+  /**
+   * Set on pointerup to the instanceId whose drag just ended (or `null`
+   * once consumed / between gestures). Read via {@link consumeRecentDrag}:
+   * if non-null, the viewer's mouseup-as-click handler suppresses the
+   * face-selection click and uses the instance id to suppress hover on the
+   * just-dropped part until the cursor leaves it. Eagerly cleared at the
+   * start of the next pointerdown so it can never leak across gestures if
+   * a mouseup is missed.
+   */
+  private postDragSuppressInstanceId: string | null = null;
 
   private dragState: {
     instanceId: string;
@@ -28,6 +47,7 @@ export class AssemblyController {
     private renderer: WebGLRenderer,
     private camera: Camera,
     private requestRender: () => void,
+    private createPickingRaycaster: (ndcX: number, ndcY: number) => Raycaster,
   ) {
     this.container.name = 'assemblyContainer';
     this.attachPointerHandlers();
@@ -38,10 +58,12 @@ export class AssemblyController {
   }
 
   /**
-   * Diff incoming assembly data against current state. Existing instances
-   * keep their in-memory pose (drags survive across re-renders triggered by
-   * source changes). New instances start at the source-declared position.
-   * Removed instances are pruned.
+   * Diff incoming assembly data against current state. The source is the
+   * source of truth for poses (phase 03b: drag-release writes `.at(...)` back
+   * into the file), so existing instances are re-synced from the new
+   * `inst.position` / `inst.quaternion`. The currently dragged instance is
+   * skipped to avoid snapping it back mid-drag — the next render after
+   * pointerup will catch up. Removed instances are pruned.
    */
   update(sceneObjects: SceneObjectRender[], assembly: SerializedAssembly): void {
     this.allObjects = sceneObjects;
@@ -65,6 +87,14 @@ export class AssemblyController {
       const existing = this.instances.get(inst.instanceId);
       if (existing) {
         existing.data = inst;
+        existing.group.userData.grounded = inst.grounded;
+        existing.group.userData.draggable = !inst.grounded;
+        if (this.dragState?.instanceId !== inst.instanceId) {
+          existing.group.position.set(inst.position.x, inst.position.y, inst.position.z);
+          existing.group.quaternion.set(
+            inst.quaternion.x, inst.quaternion.y, inst.quaternion.z, inst.quaternion.w,
+          );
+        }
         continue;
       }
       const group = this.buildInstanceGroup(inst);
@@ -126,15 +156,20 @@ export class AssemblyController {
   }
 
   private handlePointerDown = (e: PointerEvent) => {
+    // Fresh gesture: any leftover suppress-click flag from a missed mouseup
+    // must not leak into this one. (Belt-and-suspenders; consumeRecentDrag
+    // normally clears it.)
+    this.postDragSuppressInstanceId = null;
     if (e.button !== 0) return;
     const ndc = this.toNDC(e);
-    const raycaster = new Raycaster();
-    raycaster.setFromCamera(ndc, this.camera);
+    const raycaster = this.createPickingRaycaster(ndc.x, ndc.y);
     const hit = this.raycastInstances(raycaster);
     if (!hit) return;
 
     const state = this.instances.get(hit.instanceId);
     if (!state || state.data.grounded) return;
+
+    this.dragClaimHandler?.();
 
     const planeNormal = new Vector3();
     this.camera.getWorldDirection(planeNormal);
@@ -151,9 +186,11 @@ export class AssemblyController {
       downY: e.clientY,
     };
     (this.renderer.domElement as HTMLElement).setPointerCapture(e.pointerId);
-    // Block camera-controls and any other listeners on the canvas.
+    // Block camera-controls and any other pointerdown listeners on the canvas.
+    // We deliberately do NOT call preventDefault — that would suppress the
+    // compatibility mouse-event chain (mousedown/mouseup/click) for the whole
+    // gesture, which the viewer's hover and click-detection paths rely on.
     e.stopImmediatePropagation();
-    e.preventDefault();
   };
 
   private handlePointerMove = (e: PointerEvent) => {
@@ -169,8 +206,7 @@ export class AssemblyController {
     if (!state) return;
 
     const ndc = this.toNDC(e);
-    const raycaster = new Raycaster();
-    raycaster.setFromCamera(ndc, this.camera);
+    const raycaster = this.createPickingRaycaster(ndc.x, ndc.y);
     const intersection = new Vector3();
     if (!raycaster.ray.intersectPlane(this.dragState.plane, intersection)) {
       return;
@@ -178,7 +214,6 @@ export class AssemblyController {
     state.group.position.copy(intersection.add(this.dragState.grabOffset));
     this.requestRender();
     e.stopImmediatePropagation();
-    e.preventDefault();
   };
 
   private handlePointerUp = (e: PointerEvent) => {
@@ -188,10 +223,31 @@ export class AssemblyController {
     } catch {
       // ignore — capture may not have been set
     }
+    const released = this.dragState;
     this.dragState = null;
+    // The gesture started with a drag claim; suppress the corresponding
+    // click regardless of whether the cursor moved enough to cross the
+    // drag threshold. Storing the instance id (rather than a bare bool)
+    // lets the viewer also suppress hover on this specific part until the
+    // cursor leaves it.
+    this.postDragSuppressInstanceId = released.instanceId;
+    if (released.moved && this.dragReleaseHandler) {
+      const state = this.instances.get(released.instanceId);
+      if (state) {
+        const p = state.group.position;
+        this.dragReleaseHandler(released.instanceId, { x: p.x, y: p.y, z: p.z });
+      }
+    }
     e.stopImmediatePropagation();
-    e.preventDefault();
   };
+
+  setDragReleaseHandler(handler: InstanceDragReleaseHandler | null): void {
+    this.dragReleaseHandler = handler;
+  }
+
+  setDragClaimHandler(handler: InstanceDragClaimHandler | null): void {
+    this.dragClaimHandler = handler;
+  }
 
   private toNDC(e: PointerEvent): Vector2 {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -213,11 +269,119 @@ export class AssemblyController {
         cur = cur.parent;
       }
     }
-    return null;
+    // Bounding-box fallback: a click that just misses a thin part's silhouette
+    // (or nips an edge between facets) won't produce a precise mesh hit, but
+    // the user clearly meant to grab the part. Without this, the click falls
+    // through to the viewer's selection handler and leaves a stray face
+    // highlight on drop. Grounded instances are skipped so a near-by ground
+    // doesn't poach the drag from the actually-draggable instance behind it.
+    const box = new Box3();
+    const target = new Vector3();
+    let best: { instanceId: string; worldPoint: Vector3; dist: number } | null = null;
+    for (const [id, state] of this.instances) {
+      if (state.data.grounded) continue;
+      box.setFromObject(state.group);
+      if (box.isEmpty()) continue;
+      if (!raycaster.ray.intersectBox(box, target)) continue;
+      const dist = raycaster.ray.origin.distanceTo(target);
+      if (!best || dist < best.dist) {
+        best = { instanceId: id, worldPoint: target.clone(), dist };
+      }
+    }
+    return best ? { instanceId: best.instanceId, worldPoint: best.worldPoint } : null;
   }
 
+  /**
+   * True only while the user is actively dragging a part with the cursor
+   * past the movement threshold. Used by callers that care specifically
+   * about active motion (e.g. {@link AssemblyController.update} skipping
+   * pose sync for the in-flight instance).
+   */
   isDragging(): boolean {
     return this.dragState?.moved === true;
+  }
+
+  /**
+   * True from the moment a drag is claimed (pointerdown on a non-grounded
+   * instance) until the controller releases it (pointerup). The viewer's
+   * hover handler must consult this — `mousedown`-derived flags can miss
+   * gestures when the browser suppresses compatibility mouse events, but
+   * pointer events always fire. While true, hover overlays must not be
+   * applied.
+   */
+  isDragGestureActive(): boolean {
+    return this.dragState !== null;
+  }
+
+  /**
+   * If the most recent gesture ended a drag on a non-grounded instance,
+   * returns that instance's id and clears the flag. Otherwise returns
+   * `null`. The viewer's mouseup-as-click handler calls this both to
+   * suppress the face-selection click and to drive per-instance hover
+   * suppression on the just-dropped part. Self-clears on read.
+   */
+  consumeRecentDrag(): string | null {
+    const id = this.postDragSuppressInstanceId;
+    this.postDragSuppressInstanceId = null;
+    return id;
+  }
+
+  setInstanceVisible(instanceId: string, visible: boolean): void {
+    const state = this.instances.get(instanceId);
+    if (!state) return;
+    state.group.visible = visible;
+    this.requestRender();
+  }
+
+  isInstanceVisible(instanceId: string): boolean {
+    const state = this.instances.get(instanceId);
+    return state ? state.group.visible : true;
+  }
+
+  /**
+   * Tint an instance's faces with the highlight color. Stores the original
+   * color on the material so {@link clearHighlight} can restore it. Pairs
+   * with the parts panel's "click row to highlight" interaction.
+   */
+  highlightInstance(instanceId: string, color: number): void {
+    this.clearHighlight();
+    const state = this.instances.get(instanceId);
+    if (!state) return;
+    state.group.traverse((child) => {
+      const mat = (child as any).material;
+      if (!mat || !mat.color) return;
+      if (child.userData.assemblyOriginalColor === undefined) {
+        child.userData.assemblyOriginalColor = mat.color.getHex();
+      }
+      mat.color.setHex(color);
+    });
+    this.requestRender();
+  }
+
+  clearHighlight(): void {
+    this.container.traverse((child) => {
+      if (child.userData.assemblyOriginalColor !== undefined) {
+        const mat = (child as any).material;
+        if (mat?.color) {
+          mat.color.setHex(child.userData.assemblyOriginalColor);
+        }
+        delete child.userData.assemblyOriginalColor;
+      }
+    });
+    this.requestRender();
+  }
+
+  hasInstance(instanceId: string): boolean {
+    return this.instances.has(instanceId);
+  }
+
+  /**
+   * Returns the live Three.js group that backs an instance, or null if the
+   * id is unknown. Callers should not cache the returned reference across
+   * renders — diff updates may replace the group.
+   */
+  getInstanceGroup(instanceId: string): Group | null {
+    return this.instances.get(instanceId)?.group ?? null;
   }
 }
 

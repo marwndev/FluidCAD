@@ -17,6 +17,15 @@ export type SerializedAssembly = {
     name: string;
     sourceLocation?: { filePath: string; line: number; column: number };
   }>;
+  mates: Array<{
+    mateId: string;
+    type: 'fastened' | 'revolute' | 'slider' | 'cylindrical' | 'planar' | 'parallel' | 'pin-slot';
+    connectorA: { instanceId: string; connectorId: string };
+    connectorB: { instanceId: string; connectorId: string };
+    status: 'satisfied' | 'redundant' | 'inconsistent';
+    options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
+    sourceLocation?: { filePath: string; line: number; column: number };
+  }>;
 };
 
 type SceneManager = {
@@ -142,6 +151,11 @@ export class FluidCadServer {
         for (const inst of assembly.instances) {
           if (inst.sourceLocation) {
             inst.sourceLocation.filePath = inst.sourceLocation.filePath.replace('virtual:live-render:', '');
+          }
+        }
+        for (const mate of assembly.mates) {
+          if (mate.sourceLocation) {
+            mate.sourceLocation.filePath = mate.sourceLocation.filePath.replace('virtual:live-render:', '');
           }
         }
       }

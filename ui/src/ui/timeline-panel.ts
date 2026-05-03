@@ -547,6 +547,26 @@ export class TimelinePanel {
     });
   }
 
+  dispose(): void {
+    if (this.activeDropdown) {
+      this.activeDropdown.remove();
+      this.activeDropdown = null;
+    }
+    if (this.dropdownCleanup) {
+      this.dropdownCleanup();
+      this.dropdownCleanup = null;
+    }
+    if (this.activeTransparencyPopover) {
+      this.activeTransparencyPopover.remove();
+      this.activeTransparencyPopover = null;
+    }
+    if (this.hoverPopover) {
+      this.hoverPopover.remove();
+      this.hoverPopover = null;
+    }
+    this.panel.remove();
+  }
+
   setShowBuildTimings(value: boolean): void {
     if (this.showBuildTimings === value) {
       return;

@@ -15,8 +15,22 @@ export type AssemblyInstance = {
   sourceLocation?: SourceLocation;
 };
 
+export type MateType =
+  | 'fastened'
+  | 'revolute'
+  | 'slider'
+  | 'cylindrical'
+  | 'planar'
+  | 'parallel'
+  | 'pin-slot';
+
 export type AssemblyMate = {
-  // Filled in phase 06+
+  mateId: string;
+  type: MateType;
+  connectorA: { instanceId: string; connectorId: string };
+  connectorB: { instanceId: string; connectorId: string };
+  options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
+  sourceLocation?: SourceLocation;
 };
 
 export type SerializedInstance = {
@@ -27,6 +41,16 @@ export type SerializedInstance = {
   quaternion: Quat;
   grounded: boolean;
   name: string;
+  sourceLocation?: SourceLocation;
+};
+
+export type SerializedMate = {
+  mateId: string;
+  type: MateType;
+  connectorA: { instanceId: string; connectorId: string };
+  connectorB: { instanceId: string; connectorId: string };
+  status: 'satisfied' | 'redundant' | 'inconsistent';
+  options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
   sourceLocation?: SourceLocation;
 };
 
@@ -67,6 +91,18 @@ export class AssemblyScene extends Scene {
       grounded: inst.grounded,
       name: inst.name,
       sourceLocation: inst.sourceLocation,
+    }));
+  }
+
+  getSerializedMates(): SerializedMate[] {
+    return this._mates.map(mate => ({
+      mateId: mate.mateId,
+      type: mate.type,
+      connectorA: mate.connectorA,
+      connectorB: mate.connectorB,
+      status: 'satisfied',
+      options: mate.options,
+      sourceLocation: mate.sourceLocation,
     }));
   }
 }

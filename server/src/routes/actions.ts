@@ -11,6 +11,7 @@ import {
   removePick,
   setPickPoints,
 } from '../code-editor.ts';
+import { updateInsertChain, type InsertChainEdit } from '../insert-chain-edit.ts';
 
 export function createActionsRouter(
   fluidCadServer: FluidCadServer,
@@ -335,6 +336,42 @@ export function createActionsRouter(
     }
     try {
       const result = await removePick(code, sourceLine);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || String(err) });
+    }
+  });
+
+  router.post('/update-insert-chain', (req, res) => {
+    const { sourceLocation, edit } = req.body;
+    if (
+      !sourceLocation ||
+      typeof sourceLocation.filePath !== 'string' ||
+      typeof sourceLocation.line !== 'number' ||
+      !edit || typeof edit !== 'object'
+    ) {
+      res.status(400).json({ error: 'Invalid request body' });
+      return;
+    }
+    sendToExtension({
+      type: 'update-insert-chain',
+      sourceLocation,
+      edit,
+    });
+    res.json({ success: true });
+  });
+
+  router.post('/code/update-insert-chain', async (req, res) => {
+    const { code, sourceLine, edit } = req.body;
+    if (
+      typeof code !== 'string' || typeof sourceLine !== 'number' ||
+      !edit || typeof edit !== 'object'
+    ) {
+      res.status(400).json({ error: 'Invalid request body' });
+      return;
+    }
+    try {
+      const result = await updateInsertChain(code, sourceLine, edit as InsertChainEdit);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || String(err) });

@@ -71,6 +71,25 @@ export function setPickPoints(
   return postCodeEdit<CodeEditResult>(serverUrl, 'set-pick-points', { code, sourceLine, points }, logger);
 }
 
+export type InsertChainEdit = {
+  ground?: boolean;
+  name?: string | null;
+  defaultName?: string;
+  at?: [number, number, number] | null;
+};
+
+export function updateInsertChain(
+  serverUrl: string,
+  code: string,
+  sourceLine: number,
+  edit: InsertChainEdit,
+  logger: vscode.OutputChannel,
+) {
+  return postCodeEdit<CodeEditResult>(
+    serverUrl, 'update-insert-chain', { code, sourceLine, edit }, logger,
+  );
+}
+
 /**
  * Replace the entire contents of `doc` with `newCode` in a single workspace
  * edit. Returns true on success.

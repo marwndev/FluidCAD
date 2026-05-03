@@ -56,5 +56,23 @@ describe("insert scope", () => {
     it("mate() throws (not implemented yet)", () => {
       expect(() => mate("fastened", null, null)).toThrow(/not implemented/i);
     });
+
+    it(".at() writes record.position", () => {
+      const inst = insert(p);
+      inst.at(1, 2, 3);
+      expect(inst.record.position).toEqual({ x: 1, y: 2, z: 3 });
+    });
+
+    it("default position is the origin without .at()", () => {
+      const inst = insert(p);
+      expect(inst.record.position).toEqual({ x: 0, y: 0, z: 0 });
+    });
+
+    it(".at() chains with .grounded() and .name() in any order", () => {
+      const inst = insert(p).at(5, 6, 7).grounded().name("foo");
+      expect(inst.record.position).toEqual({ x: 5, y: 6, z: 7 });
+      expect(inst.record.grounded).toBe(true);
+      expect(inst.record.name).toBe("foo");
+    });
   });
 });

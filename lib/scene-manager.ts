@@ -1,5 +1,5 @@
 import { Scene } from "./rendering/scene.js";
-import { AssemblyScene, SerializedInstance } from "./rendering/assembly-scene.js";
+import { AssemblyScene, SerializedInstance, SerializedMate } from "./rendering/assembly-scene.js";
 import { SceneRenderer } from "./rendering/render.js";
 import { SceneCompare } from "./rendering/scene-compare.js";
 import { FileImport } from "./io/file-import.js";
@@ -45,11 +45,14 @@ class SceneManager {
     return this.renderer.render(scene);
   }
 
-  getAssemblyData(scene: Scene): { instances: SerializedInstance[] } | null {
+  getAssemblyData(scene: Scene): { instances: SerializedInstance[]; mates: SerializedMate[] } | null {
     if (!(scene instanceof AssemblyScene)) {
       return null;
     }
-    return { instances: scene.getSerializedInstances() };
+    return {
+      instances: scene.getSerializedInstances(),
+      mates: scene.getSerializedMates(),
+    };
   }
 
   rollbackScene(scene: Scene, rollbackIndex: number) {

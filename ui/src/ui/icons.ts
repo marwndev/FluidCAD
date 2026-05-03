@@ -37,3 +37,17 @@ export const ICON_EYE_OFF = iconEyeOff;
 export const ICON_SECTION_VIEW = iconCircleHalf2;
 export const ICON_PAUSE = iconPlayerPause;
 export const ICON_ALERT_TRIANGLE = iconAlertTriangle;
+
+/**
+ * Mechanism-diagram fixed-support glyph used to mark grounded instances in
+ * the parts panel. Drawn inline (not from the tabler icon set) because it's
+ * a domain-specific symbol with no off-the-shelf equivalent.
+ */
+export const ICON_GROUND = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+  <line x1="2" y1="5" x2="12" y2="5"/>
+  <line x1="3" y1="5" x2="1.5" y2="8"/>
+  <line x1="5.5" y1="5" x2="4" y2="8"/>
+  <line x1="8" y1="5" x2="6.5" y2="8"/>
+  <line x1="10.5" y1="5" x2="9" y2="8"/>
+  <line x1="12.5" y1="5" x2="11" y2="8"/>
+</svg>`;

@@ -69,6 +69,10 @@ function M.set_pick_points(code, source_line, points)
   return post('set-pick-points', { code = code, sourceLine = source_line, points = points })
 end
 
+function M.update_insert_chain(code, source_line, edit)
+  return post('update-insert-chain', { code = code, sourceLine = source_line, edit = edit })
+end
+
 --- Replace the entire contents of `bufnr` with `new_code`. Returns true on
 --- success.
 function M.replace_buffer(bufnr, new_code)

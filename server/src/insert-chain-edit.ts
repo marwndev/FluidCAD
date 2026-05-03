@@ -145,7 +145,16 @@ export type InsertChainEdit = {
   name?: string | null;
   /** Drop `.name(...)` if its value matches this default (revert-to-default). */
   defaultName?: string;
+  /**
+   * Triple to set as `.at(x, y, z)`, `null` to drop, `undefined` to leave alone.
+   * A triple within `AT_ORIGIN_EPSILON` of the origin is treated like `null`
+   * — the chained call is stripped so a never-moved insert stays bare.
+   */
+  at?: [number, number, number] | null;
 };
+
+const AT_ORIGIN_EPSILON = 1e-6;
+const AT_DECIMALS = 6;
 
 export type InsertChainEditResult = { newCode: string };
 
@@ -182,16 +191,20 @@ export async function updateInsertChain(
 
 function applyEdits(code: string, chain: TSNode[], edit: InsertChainEdit): string {
   let working = code;
+  const sourceLine = chain[0].startPosition.row + 1;
 
   // Operate from end of file to start so later splices don't invalidate earlier indices.
-  // For the single-chain case this means: name first (it's later in chain), then ground.
-  // We rebuild the chain after each edit by re-parsing, to keep node indices fresh.
+  // For the single-chain case this means: name first (it's later in chain), then at,
+  // then ground. We rebuild the chain after each edit by re-parsing, to keep node
+  // indices fresh.
   if (edit.name !== undefined) {
     working = applyName(working, chain, edit.name, edit.defaultName);
   }
-  // Re-parse to refresh indices for the ground edit.
+  if (edit.at !== undefined) {
+    working = applyAt(working, sourceLine, edit.at);
+  }
   if (edit.ground !== undefined) {
-    working = applyGround(working, chain[0].startPosition.row + 1, edit.ground);
+    working = applyGround(working, sourceLine, edit.ground);
   }
   return working;
 }
@@ -219,6 +232,46 @@ function applyName(
   }
   // Append `.name(...)` to the chain.
   return appendChainCall(code, chain, `.name(${literal})`);
+}
+
+function applyAt(
+  code: string,
+  sourceLine: number,
+  value: [number, number, number] | null,
+): string {
+  return reParseAndEdit(code, sourceLine, (chain) => {
+    const atCall = findMethodCall(chain, 'at');
+    const isOrigin =
+      value !== null &&
+      Math.abs(value[0]) < AT_ORIGIN_EPSILON &&
+      Math.abs(value[1]) < AT_ORIGIN_EPSILON &&
+      Math.abs(value[2]) < AT_ORIGIN_EPSILON;
+
+    if (value === null || isOrigin) {
+      if (atCall) {
+        return removeChainCall(code, atCall);
+      }
+      return null;
+    }
+
+    const literal = formatAtArgs(value);
+    if (atCall) {
+      const args = atCall.childForFieldName('arguments');
+      if (!args) return null;
+      return spliceCode(code, args.startIndex + 1, args.endIndex - 1, literal);
+    }
+    return appendChainCall(code, chain, `.at(${literal})`);
+  });
+}
+
+function formatAtArgs(value: [number, number, number]): string {
+  return value.map(formatAtNumber).join(', ');
+}
+
+function formatAtNumber(n: number): string {
+  // Round noisy float drag positions to a stable diff. `+x.toFixed(6)` strips
+  // trailing zeros so `1.5` stays `1.5`, not `1.500000`.
+  return String(+n.toFixed(AT_DECIMALS));
 }
 
 function applyGround(code: string, sourceLine: number, ground: boolean): string {

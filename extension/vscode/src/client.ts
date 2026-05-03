@@ -23,6 +23,7 @@ import {
   handleRemovePoint,
   handleSetPickPoints,
   handleGotoSource,
+  handleUpdateInsertChain,
 } from './code-edits';
 import { updateDiagnostics, type CompileError } from './diagnostics';
 
@@ -146,6 +147,12 @@ export class Client {
       }
       case 'set-pick-points': {
         handleSetPickPoints(this, msg);
+        break;
+      }
+      case 'update-insert-chain': {
+        handleUpdateInsertChain(this, msg).catch((err) => {
+          this.logger.appendLine(`[update-insert-chain] error: ${err?.stack || err}`);
+        });
         break;
       }
       case 'add-pick': {
