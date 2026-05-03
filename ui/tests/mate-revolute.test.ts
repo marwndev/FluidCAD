@@ -314,4 +314,120 @@ describe('mate(revolute) — phase 07', () => {
     const bConnWorld = flat.localOrigin.clone().applyQuaternion(b.quaternion).add(b.position);
     expect(bConnWorld.distanceTo(aConnWorld)).toBeLessThan(1e-4);
   });
+
+  it('drag of fastened sibling rotates the cluster around the revolute pivot', async () => {
+    // Layout:
+    //   i1 grounded
+    //   i2 fastened to i3
+    //   i2 revolute to i1
+    // Pre-fix: dragging i3 picked i3 as the fastened driver, which let
+    //   the fastened fixup overwrite the revolute relation — i2 and i3
+    //   moved freely with the cursor instead of pivoting around i1.
+    // With cluster-aware role picking, i2 (which has the revolute mate)
+    //   drives the fastened pair. Dragging i3 rotates the rigid cluster
+    //   around i1's pivot, with i3's grab point tracking the cursor.
+    const flat: ConnectorState = {
+      connectorId: 'c',
+      localOrigin: new Vector3(0, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const solver = new Solver();
+    await solver.ensureReady();
+
+    // Initial poses chosen so the mates are already satisfied:
+    //   i1 at origin; i2 face-to-face fastened with i1's axis (will be
+    //   placed by the warm-start). For test simplicity, seed i2 at origin
+    //   facing the same way and let warm-start settle. i3 is fastened to
+    //   i2 — also seeded near origin.
+    const initial = (instanceId: string, grounded: boolean, x = 0) => ({
+      instanceId,
+      position: new Vector3(x, 0, 0),
+      quaternion: new Quaternion(),
+      grounded,
+      connectors: [flat],
+    });
+
+    // Settle the cluster first (no drag).
+    const settle = solver.solve({
+      bodies: [
+        initial('i1', true),
+        initial('i2', false, 50),
+        initial('i3', false, 100),
+      ],
+      mates: [
+        {
+          mateId: 'fast', type: 'fastened',
+          connectorA: { instanceId: 'i2', connectorId: 'c' },
+          connectorB: { instanceId: 'i3', connectorId: 'c' },
+        },
+        {
+          mateId: 'rev', type: 'revolute',
+          connectorA: { instanceId: 'i2', connectorId: 'c' },
+          connectorB: { instanceId: 'i1', connectorId: 'c' },
+        },
+      ],
+    });
+    expect(settle.result).toBe('okay');
+    const i2Settled = settle.bodies.find(b => b.instanceId === 'i2')!;
+    const i3Settled = settle.bodies.find(b => b.instanceId === 'i3')!;
+    // Connectors of the fastened pair must coincide and i2's connector
+    // must coincide with i1's at world origin.
+    const i2ConnWorld = flat.localOrigin.clone()
+      .applyQuaternion(i2Settled.quaternion).add(i2Settled.position);
+    const i3ConnWorld = flat.localOrigin.clone()
+      .applyQuaternion(i3Settled.quaternion).add(i3Settled.position);
+    expect(i2ConnWorld.distanceTo(new Vector3(0, 0, 0))).toBeLessThan(1e-4);
+    expect(i3ConnWorld.distanceTo(i2ConnWorld)).toBeLessThan(1e-4);
+
+    // Now grab a point on i3, far from the pivot (so a rotation produces
+    // visible motion), and drag the cursor to a target on the rotation
+    // circle. With the bug, i3 would just translate to the cursor and i2
+    // would follow it, leaving the revolute violated.
+    const grabLocalOnI3 = new Vector3(20, 0, 0);
+    const grabBefore = grabLocalOnI3.clone()
+      .applyQuaternion(i3Settled.quaternion).add(i3Settled.position);
+    const radius = grabBefore.length(); // distance to pivot at world origin
+    const cursor = new Vector3(0, radius, 0);
+
+    const drag = solver.solve({
+      bodies: [
+        { instanceId: 'i1', position: new Vector3(0, 0, 0), quaternion: new Quaternion(), grounded: true, connectors: [flat] },
+        { instanceId: 'i2', position: i2Settled.position.clone(), quaternion: i2Settled.quaternion.clone(), grounded: false, connectors: [flat] },
+        { instanceId: 'i3', position: i3Settled.position.clone(), quaternion: i3Settled.quaternion.clone(), grounded: false, connectors: [flat] },
+      ],
+      mates: [
+        {
+          mateId: 'fast', type: 'fastened',
+          connectorA: { instanceId: 'i2', connectorId: 'c' },
+          connectorB: { instanceId: 'i3', connectorId: 'c' },
+        },
+        {
+          mateId: 'rev', type: 'revolute',
+          connectorA: { instanceId: 'i2', connectorId: 'c' },
+          connectorB: { instanceId: 'i1', connectorId: 'c' },
+        },
+      ],
+      draggedInstanceId: 'i3',
+      draggedCursorWorld: cursor,
+      draggedGrabLocal: grabLocalOnI3,
+    });
+    expect(drag.result).toBe('okay');
+
+    const i2Drag = drag.bodies.find(b => b.instanceId === 'i2')!;
+    const i3Drag = drag.bodies.find(b => b.instanceId === 'i3')!;
+    // Revolute is preserved: i2's connector still at the pivot (origin).
+    const i2ConnAfter = flat.localOrigin.clone()
+      .applyQuaternion(i2Drag.quaternion).add(i2Drag.position);
+    expect(i2ConnAfter.distanceTo(new Vector3(0, 0, 0))).toBeLessThan(1e-4);
+    // Fastened is preserved: i3's connector coincides with i2's.
+    const i3ConnAfter = flat.localOrigin.clone()
+      .applyQuaternion(i3Drag.quaternion).add(i3Drag.position);
+    expect(i3ConnAfter.distanceTo(i2ConnAfter)).toBeLessThan(1e-4);
+    // Drag took effect: i3's grab point landed at (or very close to) the
+    // cursor target on the rotation circle.
+    const grabAfter = grabLocalOnI3.clone()
+      .applyQuaternion(i3Drag.quaternion).add(i3Drag.position);
+    expect(grabAfter.distanceTo(cursor)).toBeLessThan(1e-3);
+  });
 });

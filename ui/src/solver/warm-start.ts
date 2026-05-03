@@ -86,7 +86,7 @@ export function applyRevoluteWarmStarts(
     const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId);
+    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
     const options = mate.options ?? {};
@@ -101,17 +101,31 @@ export function applyRevoluteWarmStarts(
       follower.quaternion = seed.quaternion;
     }
 
-    // Drag of the follower: rotate it about the pivot Z by the angle that
-    // makes the *grab point* track the cursor. Using the grab point
-    // (rather than body origin) is what gives a sign-correct rotation
-    // regardless of which side of the pivot the user grabbed from.
+    // Drag-of-cluster: rotate the follower about the pivot Z by the angle
+    // that brings the *grab point* to the cursor. The grab point may live
+    // on the follower itself, or on any body fastened-connected to it
+    // (the rigid cluster pivots as one), so the dragged body counts as
+    // long as it's in the follower's fastened cluster. Computing the
+    // grab world from the dragged body's pose makes the angle correct
+    // for both cases (drag-self and drag-cluster-mate).
     if (
       draggedCursorWorld
       && draggedGrabLocal
-      && draggedInstanceId === follower.instanceId
+      && draggedInstanceId
       && !follower.grounded
     ) {
-      rotateFollowerToward(driver, follower, driverConn, draggedCursorWorld, draggedGrabLocal);
+      const cluster = findFastenedCluster(follower.instanceId, mates);
+      if (cluster.has(draggedInstanceId)) {
+        const draggedBody = byId.get(draggedInstanceId);
+        if (draggedBody) {
+          const grabWorld = draggedGrabLocal.clone()
+            .applyQuaternion(draggedBody.quaternion)
+            .add(draggedBody.position);
+          rotateFollowerTowardWorld(
+            driver, follower, driverConn, draggedCursorWorld, grabWorld,
+          );
+        }
+      }
     }
 
     // Re-derive position from the (possibly rotated) orientation so the
@@ -156,7 +170,7 @@ export function applyRevoluteFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId);
+    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -228,21 +242,26 @@ function isRevoluteSatisfied(
  * eliminates this sign error regardless of where on the body the user
  * grabbed.
  */
-function rotateFollowerToward(
+/**
+ * World-frame variant: rotate the follower about the driver-connector Z
+ * axis by the angle that takes `grabWorld` to `cursorWorld` along the
+ * arc. `grabWorld` is the current world position of whatever point is
+ * being dragged (which may live on the follower or on a body
+ * fastened-connected to it).
+ */
+function rotateFollowerTowardWorld(
   driver: BodyState,
   follower: BodyState,
   driverConn: ConnectorState,
   cursorWorld: Vector3,
-  grabLocal: Vector3,
+  grabWorld: Vector3,
 ): void {
   const pivot = driverConn.localOrigin.clone()
     .applyQuaternion(driver.quaternion).add(driver.position);
   const axis = driverConn.localNormal.clone()
     .applyQuaternion(driver.quaternion).normalize();
 
-  const grabWorld = grabLocal.clone()
-    .applyQuaternion(follower.quaternion).add(follower.position);
-  const fromVec = grabWorld.sub(pivot);
+  const fromVec = grabWorld.clone().sub(pivot);
   const fromInPlane = fromVec.clone()
     .sub(axis.clone().multiplyScalar(fromVec.dot(axis)));
   const toVec = cursorWorld.clone().sub(pivot);
@@ -319,7 +338,7 @@ export function applyFastenedWarmStarts(
     if (!aConn || !bConn) continue;
 
     const roles = pickRoles(
-      aBody, bBody, aConn, bConn, mate, draggedInstanceId,
+      aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
     );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
@@ -359,7 +378,7 @@ export function applyFastenedFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId);
+    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -393,8 +412,9 @@ function pickRoles(
   bBody: BodyState,
   aConn: ConnectorState,
   bConn: ConnectorState,
-  _mate: MateRecord,
+  mate: MateRecord,
   draggedInstanceId?: string,
+  allMates?: MateRecord[],
 ): Roles | null {
   // Grounded bodies are immovable and must always be drivers. Two grounded
   // bodies have nothing to warm-start (the mate is either pre-satisfied or
@@ -408,12 +428,82 @@ function pickRoles(
   if (bBody.grounded) {
     return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
   }
-  // Neither grounded: the dragged body is the driver, since the user is
-  // steering it. With no drag, mate-author order picks A as driver.
+
+  // Constraint-aware role pick for fastened: a body that has a non-fastened
+  // mate (e.g. revolute) is more constrained than one that doesn't, and
+  // should drive the fastened pair so the rigid cluster pivots correctly.
+  // Without this, a chain like "i1 grounded → revolute → i2 → fastened →
+  // i3", when the user drags i3, would pick i3 as the fastened driver
+  // (drag-aware tiebreak), and the fastened fixup would clobber the
+  // revolute relation with i2 → i3 ends up moving freely instead of
+  // rotating around i1's pivot.
+  if (mate.type === 'fastened' && allMates) {
+    const aHasOther = hasNonFastenedMateOther(aBody.instanceId, mate.mateId, allMates);
+    const bHasOther = hasNonFastenedMateOther(bBody.instanceId, mate.mateId, allMates);
+    if (aHasOther && !bHasOther) {
+      return { driver: aBody, follower: bBody, driverConn: aConn, followerConn: bConn };
+    }
+    if (bHasOther && !aHasOther) {
+      return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
+    }
+  }
+
+  // Neither grounded, no constraint-asymmetry signal: the dragged body
+  // is the driver, since the user is steering it. With no drag,
+  // mate-author order picks A as driver.
   if (draggedInstanceId === bBody.instanceId) {
     return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
   }
   return { driver: aBody, follower: bBody, driverConn: aConn, followerConn: bConn };
+}
+
+/**
+ * True if `instanceId` participates in any mate other than `excludeMateId`
+ * whose type isn't fastened. Used by `pickRoles` to give bodies with
+ * external (non-fastened) constraints priority as the fastened driver.
+ */
+function hasNonFastenedMateOther(
+  instanceId: string,
+  excludeMateId: string,
+  mates: MateRecord[],
+): boolean {
+  for (const m of mates) {
+    if (m.mateId === excludeMateId) continue;
+    if (m.type === 'fastened') continue;
+    if (m.connectorA.instanceId === instanceId
+        || m.connectorB.instanceId === instanceId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Set of instance ids that are fastened-connected to `rootId` (transitively).
+ * A fastened cluster moves as a single rigid body, so a drag of any cluster
+ * member is equivalent to dragging the cluster as a whole — relevant for
+ * revolute warm-start, where the dragged body need not be the revolute
+ * follower itself for the rotation to apply.
+ */
+function findFastenedCluster(rootId: string, mates: MateRecord[]): Set<string> {
+  const cluster = new Set<string>([rootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const m of mates) {
+      if (m.type !== 'fastened') continue;
+      const a = m.connectorA.instanceId;
+      const b = m.connectorB.instanceId;
+      if (cluster.has(a) && !cluster.has(b)) {
+        cluster.add(b);
+        changed = true;
+      } else if (cluster.has(b) && !cluster.has(a)) {
+        cluster.add(a);
+        changed = true;
+      }
+    }
+  }
+  return cluster;
 }
 
 /**
