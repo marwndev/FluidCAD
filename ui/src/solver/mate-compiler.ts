@@ -8,6 +8,7 @@ import type { SolveSpaceApi } from './solvespace-loader.js';
 import type { MateRecord } from './types.js';
 import { compileFastened } from './mates/fastened.js';
 import { compileRevolute } from './mates/revolute.js';
+import { compileSlider } from './mates/slider.js';
 
 export const FREE_IN_3D = 0;
 
@@ -51,7 +52,7 @@ export function lookupConnector(
 const COMPILERS: Record<MateRecord['type'], MateCompiler> = {
   fastened: compileFastened,
   revolute: compileRevolute,
-  slider: notYet('slider'),
+  slider: compileSlider,
   cylindrical: notYet('cylindrical'),
   planar: notYet('planar'),
   parallel: notYet('parallel'),

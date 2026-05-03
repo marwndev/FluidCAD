@@ -317,6 +317,221 @@ function followerPositionFromOrientation(
 }
 
 /**
+ * Slider warm-start.
+ *
+ * A slider mate locks 5 of the 6 relative DOFs between two connectors:
+ * origins lie on the same line, both Z axes are parallel (face-to-face by
+ * default; back-to-back on `.flip()`), both X axes are parallel (or rotated
+ * by `.rotate(deg)`). The single free DOF is translation along the shared
+ * line.
+ *
+ * Like fastened and revolute, the entire mate is solved JS-side. The
+ * follower's full pose is computed analytically from the driver and the
+ * current "slide value" (signed distance along the driver's connector Z
+ * axis). Slvs sees both `lockPosition` and `lockOrientation` on the
+ * follower and treats it as a known; the 1 free DOF is added back into
+ * `out.dof` by `Solver.solve()`.
+ *
+ * Per solve:
+ *   1. Pick a driver / follower for each slider mate (grounded /
+ *      already-locked bodies preferred).
+ *   2. Determine the effective Z offset (the total signed distance from
+ *      driver-connector origin to follower-connector origin along the
+ *      driver's Z axis):
+ *        - If the mate is currently satisfied (follower-connector origin
+ *          lies on the driver's axis line, within ε), preserve the
+ *          current slide value so user-dragged offsets persist.
+ *        - Otherwise, seed at `options.offset.z` (zero slide + the
+ *          author's stop-block constant).
+ *   3. If the dragged body is in the follower's fastened cluster,
+ *      project the cursor target onto the axis to update the slide
+ *      value. Cursor motion perpendicular to the axis is ignored —
+ *      that's the line-projection drag behaviour the spec calls for.
+ *   4. Recompute the follower's body pose so its connector frame meets
+ *      the driver's connector frame at the chosen position along the
+ *      axis (with `flip` and `rotate` applied to orientation).
+ *   5. Lock both position and orientation.
+ *
+ * `applySliderFixup` re-runs step 4 after the solver has moved the
+ * driver, propagating drag-of-driver motion to the follower while the
+ * slide value (read back from the warm-started follower position) is
+ * preserved.
+ */
+export type SliderDragInfo = {
+  draggedInstanceId?: string;
+  /** Raw cursor world position on the drag plane. */
+  draggedCursorWorld?: Vector3;
+  /** Grab point in body-local frame. */
+  draggedGrabLocal?: Vector3;
+};
+
+const SLIDER_EPS = 1e-4;
+
+export function applySliderWarmStarts(
+  bodies: BodyState[],
+  mates: MateRecord[],
+  drag: SliderDragInfo = {},
+): void {
+  const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
+  const byId = new Map(bodies.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'slider') continue;
+    const aBody = byId.get(mate.connectorA.instanceId);
+    const bBody = byId.get(mate.connectorB.instanceId);
+    if (!aBody || !bBody) continue;
+    const aConn = aBody.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    if (!roles) continue;
+    const { driver, follower, driverConn, followerConn } = roles;
+    const options = mate.options ?? {};
+    const seedOffsetZ = options.offset?.[2] ?? 0;
+
+    let effectiveZ: number;
+    if (isSliderOnAxis(driver, follower, driverConn, followerConn)) {
+      // Preserve the current slide value across solves so a user drag
+      // stays where they left it. The signed distance along the driver Z
+      // already includes any author offset, so we read it directly.
+      effectiveZ = currentSliderZOffset(driver, driverConn, follower, followerConn);
+    } else {
+      effectiveZ = seedOffsetZ;
+    }
+
+    // Drag-of-cluster: shift the slide value by the axial component of
+    // (cursor - grabWorld). The grab point's world position is computed
+    // from the dragged body's pose, so this works whether the dragged
+    // body is the follower itself or another body fastened to it.
+    if (
+      draggedCursorWorld
+      && draggedGrabLocal
+      && draggedInstanceId
+      && !follower.grounded
+    ) {
+      const cluster = findFastenedCluster(follower.instanceId, mates);
+      if (cluster.has(draggedInstanceId)) {
+        const draggedBody = byId.get(draggedInstanceId);
+        if (draggedBody) {
+          const grabWorld = draggedGrabLocal.clone()
+            .applyQuaternion(draggedBody.quaternion)
+            .add(draggedBody.position);
+          const axis = driverConn.localNormal.clone()
+            .applyQuaternion(driver.quaternion).normalize();
+          const delta = draggedCursorWorld.clone().sub(grabWorld).dot(axis);
+          effectiveZ += delta;
+        }
+      }
+    }
+
+    const target = computeFastenedTargetPose(driver, driverConn, followerConn, {
+      ...options,
+      offset: [0, 0, effectiveZ],
+    });
+    follower.position = target.position;
+    follower.quaternion = target.quaternion;
+    follower.lockPosition = true;
+    follower.lockOrientation = true;
+  }
+}
+
+/**
+ * Re-derive each slider follower's pose from the *solved* driver pose.
+ * The slide value is read back from the warm-started follower position
+ * (which was mutated in place by `applySliderWarmStarts`), so a drag of
+ * the driver carries the follower along the axis with the same relative
+ * offset.
+ */
+export function applySliderFixup(
+  inputBodies: BodyState[],
+  out: SolvedBody[],
+  mates: MateRecord[],
+  draggedInstanceId?: string,
+): void {
+  const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
+  const outById = new Map(out.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'slider') continue;
+    const aInput = inputById.get(mate.connectorA.instanceId);
+    const bInput = inputById.get(mate.connectorB.instanceId);
+    if (!aInput || !bInput) continue;
+    const aConn = aInput.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    if (!roles) continue;
+    const driverOut = outById.get(roles.driver.instanceId);
+    const followerOut = outById.get(roles.follower.instanceId);
+    if (!driverOut || !followerOut) continue;
+
+    // Read the slide value from the warm-started follower (input) relative
+    // to the input driver. The warm-started follower is consistent with
+    // the input driver, so projecting back gives the value the warm-start
+    // chose (preserved or freshly seeded).
+    const effectiveZ = currentSliderZOffset(
+      roles.driver, roles.driverConn, roles.follower, roles.followerConn,
+    );
+    const driverState: BodyState = {
+      ...roles.driver,
+      position: driverOut.position,
+      quaternion: driverOut.quaternion,
+    };
+    const target = computeFastenedTargetPose(
+      driverState, roles.driverConn, roles.followerConn,
+      { ...(mate.options ?? {}), offset: [0, 0, effectiveZ] },
+    );
+    followerOut.position = target.position;
+    followerOut.quaternion = target.quaternion;
+  }
+}
+
+/**
+ * True iff the follower's connector origin lies on the driver's connector
+ * Z axis line (perpendicular distance < ε). Orientation is intentionally
+ * not checked — the slider warm-start always re-imposes orientation from
+ * the driver, so any drift would be corrected anyway. The point of this
+ * check is to decide whether the *slide value* is meaningful or we need
+ * to seed from `options.offset.z` for a fresh assembly.
+ */
+function isSliderOnAxis(
+  driver: BodyState,
+  follower: BodyState,
+  driverConn: ConnectorState,
+  followerConn: ConnectorState,
+): boolean {
+  const dOrigin = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const dZ = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const fOrigin = followerConn.localOrigin.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  const diff = fOrigin.clone().sub(dOrigin);
+  const along = diff.dot(dZ);
+  const perp = diff.clone().sub(dZ.clone().multiplyScalar(along));
+  return perp.length() < SLIDER_EPS;
+}
+
+/** Signed distance from driver-connector origin to follower-connector
+ *  origin along the driver's connector Z axis (in world). Positive when
+ *  follower is on the +Z side of driver. Caller guarantees the follower
+ *  is on-axis (otherwise the perpendicular component is silently lost). */
+function currentSliderZOffset(
+  driver: BodyState,
+  driverConn: ConnectorState,
+  follower: BodyState,
+  followerConn: ConnectorState,
+): number {
+  const dOrigin = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const dZ = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const fOrigin = followerConn.localOrigin.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  return fOrigin.clone().sub(dOrigin).dot(dZ);
+}
+
+/**
  * Mutates each follower body in `bodies` so its pose is consistent with
  * its driver's pose under the fastened mate semantics. Sets
  * `lockOrientation = true` on every follower so the solver freezes its

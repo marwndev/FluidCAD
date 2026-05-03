@@ -14,6 +14,8 @@ import {
   applyFastenedWarmStarts,
   applyRevoluteFixup,
   applyRevoluteWarmStarts,
+  applySliderFixup,
+  applySliderWarmStarts,
 } from './warm-start.js';
 
 export class Solver {
@@ -55,6 +57,16 @@ export class Solver {
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
     });
+    // Slider runs after revolute so chains like A grounded → revolute → B →
+    // slider → C resolve correctly: revolute locks B first (grounded → B),
+    // then slider sees B as locked (driver) and computes C from it. The
+    // free DOF (translation along the shared axis) is added back into the
+    // reported DOF below.
+    applySliderWarmStarts(input.bodies, input.mates, {
+      draggedInstanceId: input.draggedInstanceId,
+      draggedCursorWorld: input.draggedCursorWorld,
+      draggedGrabLocal: input.draggedGrabLocal,
+    });
     const built = buildSystem(this.api, input);
 
     if (input.draggedInstanceId && input.draggedTargetOrigin) {
@@ -81,11 +93,13 @@ export class Solver {
     // pose is updated here, then the fastened fixup picks up the
     // updated B as driver.
     applyRevoluteFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
+    applySliderFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
     applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    // Each revolute mate contributes 1 DOF that slvs can't see (the
-    // follower's params are all locked). Add them in so the footer reads
-    // the geometric DOF rather than slvs's internal accounting.
+    // Each non-both-grounded revolute / slider mate contributes 1 DOF that
+    // slvs can't see (follower's params are all locked). Add them in so
+    // the footer reads the geometric DOF rather than slvs's accounting.
     out.dof += countRevoluteFreeDof(input);
+    out.dof += countSliderFreeDof(input);
     return out;
   }
 
@@ -169,6 +183,23 @@ function countRevoluteFreeDof(input: SolverInput): number {
   let extra = 0;
   for (const mate of input.mates) {
     if (mate.type !== 'revolute') continue;
+    const a = byId.get(mate.connectorA.instanceId);
+    const b = byId.get(mate.connectorB.instanceId);
+    if (!a || !b) continue;
+    if (a.grounded && b.grounded) continue;
+    extra += 1;
+  }
+  return extra;
+}
+
+/** Sum the free DOF contributed by slider mates (1 per mate where at
+ *  least one of the two bodies is non-grounded). Both-grounded sliders
+ *  carry no DOF (immovable pair). */
+function countSliderFreeDof(input: SolverInput): number {
+  const byId = new Map(input.bodies.map(b => [b.instanceId, b]));
+  let extra = 0;
+  for (const mate of input.mates) {
+    if (mate.type !== 'slider') continue;
     const a = byId.get(mate.connectorA.instanceId);
     const b = byId.get(mate.connectorB.instanceId);
     if (!a || !b) continue;

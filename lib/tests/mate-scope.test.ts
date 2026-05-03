@@ -105,4 +105,26 @@ describe("mate scope and validation", () => {
     mate("fastened", a.connectors.top, b.connectors.top).flip().flip();
     expect(scene.getMates()[0].options?.flip).toBe(false);
   });
+
+  it("slider mate rejects XY offsets", () => {
+    const { p } = startAssembly();
+    const a = insert(p);
+    const b = insert(p);
+    expect(() =>
+      mate("slider", a.connectors.top, b.connectors.top).offset(1, 0, 0),
+    ).toThrow(/along Z/i);
+    const c = insert(p);
+    const d = insert(p);
+    expect(() =>
+      mate("slider", c.connectors.top, d.connectors.top).offset(0, 2, 5),
+    ).toThrow(/along Z/i);
+  });
+
+  it("slider mate accepts Z-only offsets", () => {
+    const { p, scene } = startAssembly();
+    const a = insert(p);
+    const b = insert(p);
+    mate("slider", a.connectors.top, b.connectors.top).offset(0, 0, 5);
+    expect(scene.getMates()[0].options?.offset).toEqual([0, 0, 5]);
+  });
 });
