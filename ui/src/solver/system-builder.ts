@@ -8,10 +8,14 @@
 //   - WORKPLANE entity referencing point + normal
 //
 // Per connector on body i (only when local Z ≈ 0):
-//   - 2 POINT_IN_2D params (u, v) in workplane i
-//   - 1 NORMAL_IN_3D entity (separate quat params) — the connector's world
-//     orientation. Placed in group 1 so it's a known; phase 06+ adds
-//     constraints relating connectors that need orientation.
+//   - POINT_IN_2D (u, v) at the connector origin, in workplane i.
+//   - POINT_IN_2D (u', v') one unit along the connector's X axis, in workplane i.
+//   - LINE_SEGMENT between them — the connector's X axis in body workplane.
+//
+// The body's own NORMAL_IN_3D entity (which rotates with the body) is what
+// mate compilers use for the connector's Z direction; we don't materialise a
+// per-connector world-normal entity because it would need to be a function
+// of the body's params, which slvs can't express.
 //
 // Group assignment:
 //   - Grounded body params → group 1 (fixed by the solver).
@@ -24,6 +28,7 @@
 import { Quaternion, Vector3 } from 'three';
 import { ConnectorState, SolverInput } from './types.js';
 import type { SolveSpaceApi } from './solvespace-loader.js';
+import { compileMate, type CompileCtx } from './mate-compiler.js';
 
 export const GROUP_GROUND = 1;
 export const GROUP_ACTIVE = 2;
@@ -35,10 +40,19 @@ export type ConnectorHandles = {
   connectorId: string;
   /** Workplane-local 2D point referencing (u, v) params. */
   point: EntityHandle;
-  /** World-space normal entity (4 quat params, fixed in group 1 — phase 05). */
-  normal: EntityHandle;
+  /**
+   * LINE_SEGMENT in the body workplane from the connector origin one unit
+   * along the connector's X axis. Used by ANGLE constraints (e.g. fastened's
+   * rotate option) to lock relative roll between two connectors.
+   */
+  xAxisLine: EntityHandle;
   /** Param handles for the connector's u, v in the body's workplane. */
   uvParams: [ParamHandle, ParamHandle];
+  /** Original local-frame data, kept around for mate compilers that need
+   *  to add auxiliary points (e.g. offsets) in the body's workplane. */
+  localOrigin: { x: number; y: number; z: number };
+  localXDirection: { x: number; y: number; z: number };
+  localNormal: { x: number; y: number; z: number };
 };
 
 export type BodyHandles = {
@@ -60,6 +74,10 @@ export type BuiltSystem = {
   /** Sum of group-2 free params minus the implicit unit-norm constraint count.
    *  Used as a hint; the real DOF comes back from `Slvs_Solve`. */
   expectedFreeParams: number;
+  /** Maps each constraint handle to the mateId that produced it. Lets the
+   *  solver translate libslvs' `failed[]` back into mate ids for the joints
+   *  panel and DOF footer. */
+  constraintToMate: Map<number, string>;
 };
 
 const Z_EPS = 1e-9;
@@ -78,26 +96,40 @@ export function buildSystem(api: SolveSpaceApi, input: SolverInput): BuiltSystem
   let expectedFreeParams = 0;
 
   for (const body of input.bodies) {
-    const group = body.grounded ? GROUP_GROUND : GROUP_ACTIVE;
+    // grounded → all 7 params frozen.
+    // lockPosition (on a non-grounded body) → origin params frozen.
+    // lockOrientation (on a non-grounded body) → quat params frozen.
+    // Both flags together = effectively "follower" (fully determined by a
+    // driver body); the solver treats this body as a known.
+    const originGroup = body.grounded || body.lockPosition
+      ? GROUP_GROUND
+      : GROUP_ACTIVE;
+    const quatGroup = body.grounded || body.lockOrientation
+      ? GROUP_GROUND
+      : GROUP_ACTIVE;
     if (!body.grounded) {
-      // 3 origin params + 4 quat params, but quaternion has an implicit
-      // unit-norm constraint, costing 1 DOF. So contributes 6 free DOFs.
-      expectedFreeParams += 6;
+      if (!body.lockPosition) {
+        expectedFreeParams += 3;
+      }
+      if (!body.lockOrientation) {
+        // Quat: 4 params - 1 unit-norm = 3 free.
+        expectedFreeParams += 3;
+      }
     }
 
-    const px = sys.addParam(newH(), group, body.position.x);
-    const py = sys.addParam(newH(), group, body.position.y);
-    const pz = sys.addParam(newH(), group, body.position.z);
-    const point = sys.addPoint3d(newH(), group, px, py, pz);
+    const px = sys.addParam(newH(), originGroup, body.position.x);
+    const py = sys.addParam(newH(), originGroup, body.position.y);
+    const pz = sys.addParam(newH(), originGroup, body.position.z);
+    const point = sys.addPoint3d(newH(), originGroup, px, py, pz);
 
     // Three.js Quaternion is (x, y, z, w); libslvs is (w, x, y, z).
-    const qw = sys.addParam(newH(), group, body.quaternion.w);
-    const qx = sys.addParam(newH(), group, body.quaternion.x);
-    const qy = sys.addParam(newH(), group, body.quaternion.y);
-    const qz = sys.addParam(newH(), group, body.quaternion.z);
-    const normal = sys.addNormal3d(newH(), group, qw, qx, qy, qz);
+    const qw = sys.addParam(newH(), quatGroup, body.quaternion.w);
+    const qx = sys.addParam(newH(), quatGroup, body.quaternion.x);
+    const qy = sys.addParam(newH(), quatGroup, body.quaternion.y);
+    const qz = sys.addParam(newH(), quatGroup, body.quaternion.z);
+    const normal = sys.addNormal3d(newH(), quatGroup, qw, qx, qy, qz);
 
-    const workplane = sys.addWorkplane(newH(), group, point, normal);
+    const workplane = sys.addWorkplane(newH(), originGroup, point, normal);
 
     const connectorHandles: ConnectorHandles[] = [];
     for (const c of body.connectors) {
@@ -117,13 +149,26 @@ export function buildSystem(api: SolveSpaceApi, input: SolverInput): BuiltSystem
     });
   }
 
-  // Phase 05 adds no constraints. Phase 06+ will iterate input.mates here.
-  return { sys, bodies, expectedFreeParams };
+  const constraintToMate = new Map<number, string>();
+  if (input.mates.length > 0) {
+    const ctx: CompileCtx = {
+      api,
+      sys,
+      bodies,
+      newH,
+      constraintToMate,
+    };
+    for (const mate of input.mates) {
+      compileMate(ctx, mate);
+    }
+  }
+
+  return { sys, bodies, expectedFreeParams, constraintToMate };
 }
 
 function addConnectorEntities(
   sys: any,
-  api: SolveSpaceApi,
+  _api: SolveSpaceApi,
   workplane: EntityHandle,
   c: ConnectorState,
   newH: () => number,
@@ -132,44 +177,36 @@ function addConnectorEntities(
   // body, not solver unknowns. The body's own params drive how the connector
   // moves in world space (via the workplane reference).
   if (Math.abs(c.localOrigin.z) > Z_EPS) {
-    // Phase 05 limitation: connectors with non-zero local Z are projected
-    // onto the body's workplane. Mates wiring is unaffected for phase 06's
-    // fastened/coplanar-coincident cases; phase 06+ will revisit.
+    // Phase 06 limitation: connectors with non-zero local Z are projected
+    // onto the body's workplane (the z component is dropped). Connectors
+    // authored on the part's xy plane — the common case — are exact.
   }
   const u = sys.addParam(newH(), GROUP_GROUND, c.localOrigin.x);
   const v = sys.addParam(newH(), GROUP_GROUND, c.localOrigin.y);
   const point = sys.addPoint2d(newH(), GROUP_GROUND, workplane, u, v);
 
-  // Connector's world-orientation quaternion.
-  // localXDirection and localNormal are in body-local coords.
-  const [qw, qx, qy, qz] = api.makeQuaternion(
-    api.module,
-    c.localXDirection.x, c.localXDirection.y, c.localXDirection.z,
-    crossX(c.localNormal, c.localXDirection),
-    crossY(c.localNormal, c.localXDirection),
-    crossZ(c.localNormal, c.localXDirection),
-  );
-  const pw = sys.addParam(newH(), GROUP_GROUND, qw);
-  const px = sys.addParam(newH(), GROUP_GROUND, qx);
-  const py = sys.addParam(newH(), GROUP_GROUND, qy);
-  const pz = sys.addParam(newH(), GROUP_GROUND, qz);
-  const normal = sys.addNormal3d(newH(), GROUP_GROUND, pw, px, py, pz);
+  // X-axis tip point + line. The tip sits one unit along the connector's
+  // X axis in the body's workplane. ANGLE between two such lines (one per
+  // connector) is what mate compilers use to lock relative roll.
+  const ux = sys.addParam(newH(), GROUP_GROUND, c.localOrigin.x + c.localXDirection.x);
+  const vx = sys.addParam(newH(), GROUP_GROUND, c.localOrigin.y + c.localXDirection.y);
+  const xTip = sys.addPoint2d(newH(), GROUP_GROUND, workplane, ux, vx);
+  const xAxisLine = sys.addLineSegment(newH(), GROUP_GROUND, workplane, point, xTip);
 
   return {
     connectorId: c.connectorId,
     point,
-    normal,
+    xAxisLine,
     uvParams: [u, v],
+    localOrigin: { x: c.localOrigin.x, y: c.localOrigin.y, z: c.localOrigin.z },
+    localXDirection: {
+      x: c.localXDirection.x, y: c.localXDirection.y, z: c.localXDirection.z,
+    },
+    localNormal: {
+      x: c.localNormal.x, y: c.localNormal.y, z: c.localNormal.z,
+    },
   };
 }
-
-// Inline cross-product helpers — Slvs_MakeQuaternion takes the U axis and
-// the V axis as 6 doubles, so we synthesize V = N × U inside the solver
-// builder rather than allocating a Vector3. Keeps the Three.js Vector3
-// API away from the wasm marshaling.
-function crossX(n: Vector3, u: Vector3): number { return n.y * u.z - n.z * u.y; }
-function crossY(n: Vector3, u: Vector3): number { return n.z * u.x - n.x * u.z; }
-function crossZ(n: Vector3, u: Vector3): number { return n.x * u.y - n.y * u.x; }
 
 /**
  * Read body poses back from a solved system into BodyState.position/quaternion

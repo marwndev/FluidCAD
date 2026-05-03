@@ -53,8 +53,8 @@ describe("insert scope", () => {
       expect(inst.record.grounded).toBe(true);
     });
 
-    it("mate() throws (not implemented yet)", () => {
-      expect(() => mate("fastened", null, null)).toThrow(/not implemented/i);
+    it("mate() rejects non-connector arguments", () => {
+      expect(() => mate("fastened", null as any, null as any)).toThrow(/connector/i);
     });
 
     it(".at() writes record.position", () => {

@@ -1,5 +1,6 @@
 import { Scene } from "./scene.js";
 import { Part } from "../features/part.js";
+import { Connector } from "../features/connector.js";
 import { SourceLocation } from "../common/scene-object.js";
 
 export type Vec3 = { x: number; y: number; z: number };
@@ -24,11 +25,20 @@ export type MateType =
   | 'parallel'
   | 'pin-slot';
 
+/**
+ * Live mate record. `connectorA/B.connector` is a live SceneObject
+ * reference, not a snapshotted id. SceneCompare may rewrite a Connector's
+ * id during scene-diff to inherit the prior render's id; reading
+ * `connector.id` at serialize time picks up that rewrite, while a
+ * snapshotted id taken at mate() call time would point at the
+ * fresh-UUID value before the inherit. Mirrors how `AssemblyInstance`
+ * keeps a live `part: Part` ref and reads `part.id` live.
+ */
 export type AssemblyMate = {
   mateId: string;
   type: MateType;
-  connectorA: { instanceId: string; connectorId: string };
-  connectorB: { instanceId: string; connectorId: string };
+  connectorA: { instanceId: string; connector: Connector };
+  connectorB: { instanceId: string; connector: Connector };
   options?: { rotate?: number; flip?: boolean; offset?: [number, number, number] };
   sourceLocation?: SourceLocation;
 };
@@ -60,6 +70,10 @@ export class AssemblyScene extends Scene {
 
   addInstance(instance: AssemblyInstance): void {
     this._instances.push(instance);
+  }
+
+  addMate(mate: AssemblyMate): void {
+    this._mates.push(mate);
   }
 
   getInstances(): AssemblyInstance[] {
@@ -95,11 +109,19 @@ export class AssemblyScene extends Scene {
   }
 
   getSerializedMates(): SerializedMate[] {
+    // Read connector ids live — SceneCompare.inheritIdentityFrom may have
+    // rewritten them after the mate was added during parse.
     return this._mates.map(mate => ({
       mateId: mate.mateId,
       type: mate.type,
-      connectorA: mate.connectorA,
-      connectorB: mate.connectorB,
+      connectorA: {
+        instanceId: mate.connectorA.instanceId,
+        connectorId: mate.connectorA.connector.id,
+      },
+      connectorB: {
+        instanceId: mate.connectorB.instanceId,
+        connectorId: mate.connectorB.connector.id,
+      },
       status: 'satisfied',
       options: mate.options,
       sourceLocation: mate.sourceLocation,

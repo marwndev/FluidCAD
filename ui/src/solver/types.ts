@@ -15,6 +15,23 @@ export type BodyState = {
   quaternion: Quaternion;
   grounded: boolean;
   connectors: ConnectorState[];
+  /**
+   * When true, the body's quaternion params are placed in GROUP_GROUND while
+   * its origin params stay in GROUP_ACTIVE. The solver treats orientation as
+   * a known constant and only solves the body's position. Mate compilers
+   * (e.g. fastened) flip this on for follower bodies whose orientation is
+   * fully determined by a "driver" body's pose, after the controller has
+   * pre-set the right quaternion via warm-start.
+   */
+  lockOrientation?: boolean;
+  /**
+   * When true, the body's origin params are placed in GROUP_GROUND too.
+   * Set on fastened-mate followers whose full pose (origin + orientation) is
+   * fully determined by the driver. The solver then doesn't move the body at
+   * all, and a post-solve fixup writes the follower's pose from the actual
+   * solved driver pose.
+   */
+  lockPosition?: boolean;
 };
 
 /**

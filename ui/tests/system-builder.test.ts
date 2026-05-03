@@ -53,11 +53,22 @@ describe('system-builder', () => {
 
     // Look up the connector point entity and verify its workplane is the
     // body's workplane.
-    const entities = built.sys.entities as { h: number; type: number; wrkpl: number; param: number[] }[];
+    const entities = built.sys.entities as { h: number; type: number; wrkpl: number; param: number[]; point: number[] }[];
     const point = entities.find(e => e.h === connector.point)!;
     expect(point.wrkpl).toBe(handles.workplane);
     // POINT_IN_2D has type 50001 in libslvs.
     expect(point.type).toBe(50001);
+
+    // Phase 06 also adds an X-axis line segment per connector, in the body's
+    // workplane, so mate compilers can use it for ANGLE constraints.
+    const xLine = entities.find(e => e.h === connector.xAxisLine)!;
+    expect(xLine).toBeDefined();
+    // LINE_SEGMENT has type 80001 in libslvs.
+    expect(xLine.type).toBe(80001);
+    expect(xLine.wrkpl).toBe(handles.workplane);
+    // The line points from the connector origin to the X tip; both should be
+    // POINT_IN_2D entities in the body workplane.
+    expect(xLine.point[0]).toBe(connector.point);
   });
 
   it('handles multiple bodies and connectors with monotonic handle ids', async () => {
@@ -82,7 +93,7 @@ describe('system-builder', () => {
       ...b.originParams,
       ...b.quatParams,
       b.point, b.normal, b.workplane,
-      ...b.connectors.flatMap(c => [c.point, c.normal, ...c.uvParams]),
+      ...b.connectors.flatMap(c => [c.point, c.xAxisLine, ...c.uvParams]),
     ]);
     expect(new Set(allHandles).size).toBe(allHandles.length);
   });

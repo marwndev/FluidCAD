@@ -176,7 +176,17 @@ function buildAssemblyRail(): LeftRail {
   );
   const joints = new JointsPanel(
     parts.getJointsHost(),
-    (_id) => { /* phase 06+ */ },
+    (mateId) => {
+      const mate = findMate(mateId);
+      if (!mate) return;
+      // Phase 06: highlight both instances participating in the mate. A
+      // future polish lights only the two connector triads — the hooks are
+      // there in viewer.highlightInstance, but per-connector highlighting
+      // needs new viewer machinery (tracked in phase 06 follow-ups).
+      viewer.highlightInstance(mate.connectorA.instanceId);
+      // Highlighting two instances means the second call clears the first;
+      // for now favour the A-side. Connector-pair highlight is a follow-up.
+    },
     (id) => {
       const mate = findMate(id);
       if (mate?.sourceLocation) {
@@ -204,6 +214,7 @@ function ensureRailFor(kind: 'part' | 'assembly'): LeftRail {
 }
 
 let lastAssemblyPayload: SerializedAssembly | null = null;
+let lastFailedMateIds = new Set<string>();
 
 function findInstance(instanceId: string) {
   return lastAssemblyPayload?.instances.find(i => i.instanceId === instanceId);
@@ -253,10 +264,17 @@ async function updateInsertChain(
 
 function applyAssemblyToRail(rail: LeftRail & { kind: 'assembly' }, assembly: SerializedAssembly, absPath: string): void {
   lastAssemblyPayload = assembly;
-  // Prune visibility entries for instances that no longer exist.
+  // Prune visibility entries for instances that no longer exist. Same for
+  // failed-mate ids so a mate that was failing in the prior render doesn't
+  // leak its red dot onto a different mate that happens to take its place.
   for (const id of [...rail.instanceVisibility.keys()]) {
     if (!assembly.instances.find(i => i.instanceId === id)) {
       rail.instanceVisibility.delete(id);
+    }
+  }
+  for (const id of [...lastFailedMateIds]) {
+    if (!assembly.mates.find(m => m.mateId === id)) {
+      lastFailedMateIds.delete(id);
     }
   }
   const rendered: RenderedInstance[] = assembly.instances.map(i => ({
@@ -264,7 +282,19 @@ function applyAssemblyToRail(rail: LeftRail & { kind: 'assembly' }, assembly: Se
     visible: rail.instanceVisibility.get(i.instanceId) ?? true,
   }));
   rail.parts.update(rendered, absPath);
-  rail.joints.update(assembly.mates, rendered);
+  rail.joints.update(matesWithStatus(assembly.mates, lastFailedMateIds), rendered);
+}
+
+function matesWithStatus(
+  mates: SerializedAssembly['mates'],
+  failed: Set<string>,
+): SerializedAssembly['mates'] {
+  if (failed.size === 0) {
+    return mates;
+  }
+  return mates.map(m =>
+    failed.has(m.mateId) ? { ...m, status: 'inconsistent' as const } : m,
+  );
 }
 
 shapePropertiesModal.setOpenHandler(() => {
@@ -290,6 +320,9 @@ viewer.setInstanceDragReleaseHandler((instanceId, position) => {
 
 viewer.setSolverUpdateHandler((output) => {
   if (currentRail?.kind !== 'assembly') return;
+  // Update tracked failures *before* both panels read them, so DOF footer
+  // and joints panel agree.
+  lastFailedMateIds = new Set(output.failed);
   if (output.result === 'okay') {
     currentRail.dof.update({ result: 'okay', dof: output.dof });
   } else if (output.result === 'inconsistent') {
@@ -302,6 +335,18 @@ viewer.setSolverUpdateHandler((output) => {
     // didnt-converge / too-many-unknowns — surface as inconsistent so the
     // user sees the assembly is unhealthy. No mate-specific failure list.
     currentRail.dof.update({ result: 'inconsistent', dof: output.dof, failed: [] });
+  }
+  if (lastAssemblyPayload) {
+    const rendered: RenderedInstance[] = lastAssemblyPayload.instances.map(i => ({
+      ...i,
+      visible: currentRail!.kind === 'assembly'
+        ? currentRail!.instanceVisibility.get(i.instanceId) ?? true
+        : true,
+    }));
+    currentRail.joints.update(
+      matesWithStatus(lastAssemblyPayload.mates, lastFailedMateIds),
+      rendered,
+    );
   }
 });
 

@@ -9,6 +9,7 @@
 import { GROUP_ACTIVE, buildSystem, readBackPoses, type BodyHandles, type BuiltSystem } from './system-builder.js';
 import { loadSolveSpace, type SolveSpaceApi } from './solvespace-loader.js';
 import type { SolverInput, SolverOutput, SolverResult } from './types.js';
+import { applyFastenedFixup, applyFastenedWarmStarts } from './warm-start.js';
 
 export class Solver {
   private api: SolveSpaceApi | null = null;
@@ -33,6 +34,11 @@ export class Solver {
     if (!this.api) {
       throw new Error('Solver.solve() called before ensureReady() resolved.');
     }
+    // Slvs has no primitive for "Q_B = Q_A · R_fixed" (the relation a
+    // fastened mate needs when connectors have non-trivial local frames or
+    // a face-to-face flip). Pre-compute follower pose in JS, freeze its
+    // quat params, and let slvs handle position propagation only.
+    applyFastenedWarmStarts(input.bodies, input.mates, input.draggedInstanceId);
     const built = buildSystem(this.api, input);
 
     if (input.draggedInstanceId && input.draggedTargetOrigin) {
@@ -40,9 +46,25 @@ export class Solver {
     }
 
     built.sys.calculateFaileds = true;
-    built.sys.solve(GROUP_ACTIVE);
+    // Only invoke libslvs when there's at least one free param in the
+    // active group. With every body fully grounded or locked (e.g. a
+    // grounded driver + fastened follower), Slvs_Solve crashes (memory
+    // access out of bounds) because it has nothing to do. Short-circuit:
+    // the warm-start has already determined every pose.
+    if (hasActiveParamsImpl(built.sys)) {
+      built.sys.solve(GROUP_ACTIVE);
+    } else {
+      built.sys.result = this.api.RESULT.OKAY;
+      built.sys.dof = 0;
+      built.sys.failed = [];
+    }
 
-    return this.readResult(built);
+    const out = this.readResult(built);
+    // Re-apply the fastened relation against the *solved* driver pose so
+    // followers track drivers across drags. (See warm-start.ts for why
+    // slvs constraints are unsuitable for fastened mates.)
+    applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
+    return out;
   }
 
   /**
@@ -93,13 +115,15 @@ export class Solver {
 
     const failed: string[] = [];
     if (result === 'inconsistent' || result === 'didnt-converge') {
-      // sys.failed contains constraint handles in input.mates ordering.
-      // Phase 05 adds no constraints, so this list will be empty in
-      // practice; phase 06+ wires real mate-id mapping.
       const failedHandles = (sys.failed ?? []) as number[];
-      // Constraint handles are 1-indexed in build order; phase 06 will
-      // populate input.mates and we'll map handles → mateId here.
-      void failedHandles;
+      const seen = new Set<string>();
+      for (const h of failedHandles) {
+        const mateId = built.constraintToMate.get(h);
+        if (mateId && !seen.has(mateId)) {
+          failed.push(mateId);
+          seen.add(mateId);
+        }
+      }
     }
 
     const solvedBodies = readBackPoses(built);
@@ -110,6 +134,14 @@ export class Solver {
       failed,
     };
   }
+}
+
+function hasActiveParamsImpl(sys: any): boolean {
+  const params = sys.params as { group: number }[];
+  for (const p of params) {
+    if (p.group === GROUP_ACTIVE) return true;
+  }
+  return false;
 }
 
 function setParamByHandle(sys: any, handle: number, val: number): void {

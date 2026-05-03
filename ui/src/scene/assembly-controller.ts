@@ -1,8 +1,8 @@
 import { Box3, Camera, Group, Object3D, Plane, Quaternion, Raycaster, Vector2, Vector3, WebGLRenderer } from 'three';
-import { ConnectorData, SceneObjectRender, SerializedAssembly, SerializedAssemblyInstance } from '../types';
+import { ConnectorData, SceneObjectRender, SerializedAssembly, SerializedAssemblyInstance, SerializedAssemblyMate } from '../types';
 import { buildObjectMesh } from '../meshes/mesh-factory';
 import { Solver } from '../solver';
-import type { BodyState, ConnectorState, SolverInput, SolverOutput } from '../solver';
+import type { BodyState, ConnectorState, MateRecord, SolverInput, SolverOutput } from '../solver';
 
 const DRAG_THRESHOLD_PX = 4;
 
@@ -26,6 +26,7 @@ export class AssemblyController {
   private instances = new Map<string, InstanceState>();
   private partTemplates = new Map<string, SceneObjectRender>();
   private allObjects: SceneObjectRender[] = [];
+  private mates: MateRecord[] = [];
   private dragReleaseHandler: InstanceDragReleaseHandler | null = null;
   private dragClaimHandler: InstanceDragClaimHandler | null = null;
   private solverUpdateHandler: SolverUpdateHandler | null = null;
@@ -85,6 +86,7 @@ export class AssemblyController {
         this.partTemplates.set(obj.id, obj);
       }
     }
+    this.mates = assembly.mates.map(toMateRecord);
 
     const incomingIds = new Set(assembly.instances.map(i => i.instanceId));
     for (const [id, state] of this.instances) {
@@ -131,6 +133,7 @@ export class AssemblyController {
     this.instances.clear();
     this.partTemplates.clear();
     this.allObjects = [];
+    this.mates = [];
   }
 
   private collectConnectorStates(partId: string): ConnectorState[] {
@@ -165,7 +168,7 @@ export class AssemblyController {
     }
     return {
       bodies,
-      mates: [],
+      mates: this.mates,
       draggedInstanceId,
       draggedTargetOrigin,
     };
@@ -520,3 +523,13 @@ export class AssemblyController {
 
 // Avoid unused import flagged by tsc
 void Quaternion;
+
+function toMateRecord(m: SerializedAssemblyMate): MateRecord {
+  return {
+    mateId: m.mateId,
+    type: m.type,
+    connectorA: m.connectorA,
+    connectorB: m.connectorB,
+    options: m.options,
+  };
+}
