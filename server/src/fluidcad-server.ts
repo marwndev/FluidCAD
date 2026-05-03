@@ -6,10 +6,24 @@ import { detectKind } from './file-kind.ts';
 import type { FluidScriptKind } from './file-kind.ts';
 import { BreakpointHit } from '../../lib/dist/common/breakpoint-hit.js';
 
+export type SerializedAssembly = {
+  instances: Array<{
+    instanceId: string;
+    partId: string;
+    partName: string;
+    position: { x: number; y: number; z: number };
+    quaternion: { x: number; y: number; z: number; w: number };
+    grounded: boolean;
+    name: string;
+    sourceLocation?: { filePath: string; line: number; column: number };
+  }>;
+};
+
 type SceneManager = {
   startScene(): any;
   startAssemblyScene(): any;
   renderScene(scene: any): any;
+  getAssemblyData(scene: any): SerializedAssembly | null;
   rollbackScene(scene: any, rollbackIndex: number): any;
   compare(previousScene: any, currentScene: any): any;
   setCurrentFile(filePath: string): void;
@@ -43,13 +57,14 @@ export type SceneRenderedData = {
   result: any[];
   rollbackStop: number;
   breakpointHit?: boolean;
+  assembly?: SerializedAssembly;
 };
 
 export class FluidCadServer {
   private viteManager = new ViteManager();
   private sceneManager: SceneManager | undefined;
   private previousScenes: Map<string, any> = new Map();
-  private renderingCache = new Map<string, any[]>();
+  private renderingCache = new Map<string, { result: any[]; assembly?: SerializedAssembly }>();
   private currentFileName: string = '';
   private currentFilePath: string = '';
 
@@ -81,8 +96,9 @@ export class FluidCadServer {
         return {
           absPath: normalizedFileName,
           sceneKind,
-          result: fromCache,
-          rollbackStop: fromCache.length - 1,
+          result: fromCache.result,
+          rollbackStop: fromCache.result.length - 1,
+          ...(fromCache.assembly ? { assembly: fromCache.assembly } : {}),
         };
       }
     }
@@ -121,8 +137,17 @@ export class FluidCadServer {
         }
       }
 
+      const assembly = this.sceneManager.getAssemblyData(scene);
+      if (assembly) {
+        for (const inst of assembly.instances) {
+          if (inst.sourceLocation) {
+            inst.sourceLocation.filePath = inst.sourceLocation.filePath.replace('virtual:live-render:', '');
+          }
+        }
+      }
+
       if (!filePath.startsWith('virtual:live-render')) {
-        this.renderingCache.set(normalizedFileName, result);
+        this.renderingCache.set(normalizedFileName, assembly ? { result, assembly } : { result });
       }
 
       return {
@@ -131,6 +156,7 @@ export class FluidCadServer {
         result,
         rollbackStop: result.length - 1,
         breakpointHit,
+        ...(assembly ? { assembly } : {}),
       };
     }
     catch (error) {

@@ -157,6 +157,25 @@ export interface CodeEditorState {
   isDirty: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Assembly payload (from server when sceneKind === 'assembly')
+// ---------------------------------------------------------------------------
+
+export type SerializedAssemblyInstance = {
+  instanceId: string;
+  partId: string;
+  partName: string;
+  position: { x: number; y: number; z: number };
+  quaternion: { x: number; y: number; z: number; w: number };
+  grounded: boolean;
+  name: string;
+  sourceLocation?: { filePath: string; line: number; column: number };
+};
+
+export type SerializedAssembly = {
+  instances: SerializedAssemblyInstance[];
+};
+
 export interface FileItem {
   name: string;
   isDirectory: boolean;

@@ -118,6 +118,14 @@ export interface ISelect extends ISceneObject {}
  */
 export interface IConnector extends ISceneObject {}
 
+/**
+ * A reusable design unit returned by the `part(...)` DSL. Parts can be
+ * inserted into an assembly via `insert(part)` and carry their connectors
+ * with them. The `features` shape (if any) is appended to this interface
+ * by `part()` based on what the user returns from the build callback.
+ */
+export interface IPart extends ISceneObject {}
+
 export interface IGeometry extends ISceneObject {
   /**
    * Marks this sketch geometry as construction geometry. Guide geometries are

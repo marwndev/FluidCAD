@@ -84,6 +84,21 @@ export type CompileError = {
   sourceLocation?: { filePath: string; line: number; column: number };
 };
 
+export type SerializedAssemblyInstance = {
+  instanceId: string;
+  partId: string;
+  partName: string;
+  position: { x: number; y: number; z: number };
+  quaternion: { x: number; y: number; z: number; w: number };
+  grounded: boolean;
+  name: string;
+  sourceLocation?: { filePath: string; line: number; column: number };
+};
+
+export type SerializedAssembly = {
+  instances: SerializedAssemblyInstance[];
+};
+
 export type SceneRenderedMessage = {
   type: 'scene-rendered';
   absPath: string;
@@ -91,6 +106,7 @@ export type SceneRenderedMessage = {
   result: any[];
   rollbackStop: number;
   compileError?: CompileError;
+  assembly?: SerializedAssembly;
 };
 
 export type ErrorMessage = {
@@ -184,6 +200,7 @@ export type UISceneRenderedMessage = {
   rollbackStop?: number;
   breakpointHit?: boolean;
   compileError?: CompileError;
+  assembly?: SerializedAssembly;
 };
 
 export type UIHighlightShapeMessage = {

@@ -2,7 +2,8 @@ import { Box3, BufferAttribute, BufferGeometry, Color, LineSegments, Mesh, MeshP
 import { FIT_PADDING, SceneContext } from './scene/scene-context';
 import { SceneModeManager } from './scene/scene-mode';
 import { buildSceneMesh } from './meshes/mesh-factory';
-import { SceneObjectPart, SceneObjectRender, SubSelection } from './types';
+import { SceneObjectPart, SceneObjectRender, SerializedAssembly, SubSelection } from './types';
+import { AssemblyController } from './scene/assembly-controller';
 import { SettingsPanel } from './ui/settings-panel';
 import { CentroidIndicator } from './scene/centroid-indicator';
 import { viewerSettings } from './scene/viewer-settings';
@@ -60,6 +61,7 @@ export class Viewer {
   private activeSketchId: string | null = null;
   private hiddenShapeIds = new Set<string>();
   private shapeOpacities = new Map<string, number>();
+  private assemblyController: AssemblyController | null = null;
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId)!;
@@ -250,6 +252,13 @@ export class Viewer {
     this.ctx.renderer.domElement.style.cursor = '';
 
     this.removeCompiledMesh();
+    if (this.assemblyController) {
+      const container = this.assemblyController.getContainer();
+      this.assemblyController.clear();
+      if (container.parent) {
+        container.parent.remove(container);
+      }
+    }
 
     if (!isRollback) {
       const activeObject = this.findActiveObject(sceneObjects);
@@ -295,6 +304,46 @@ export class Viewer {
     if (!this.hasRendered || (this.modeManager.isSketchMode && !isRollback && !this.isTrimming && !this.isRegionPicking && !this.isBezierDrawing)) {
       const box = new Box3();
       expandBoxExcludingMeta(box, mesh);
+      if (!box.isEmpty() && !this.isBoxContained(box)) {
+        this.ctx.fitToBox(box, true);
+        this.lastFitBox = box.clone();
+        this.hasRendered = true;
+      }
+    }
+
+    this.ctx.requestRender();
+  }
+
+  updateAssemblyView(sceneObjects: SceneObjectRender[], assembly: SerializedAssembly): void {
+    this.sceneObjects = sceneObjects;
+    this.highlightedShapeId = null;
+    this.highlightedSub = null;
+    this.hoverState = null;
+    this.hoverFaceOverlayMeshes = [];
+
+    this.removeCompiledMesh();
+    this.activeSketchId = null;
+    this.modeManager.enterDefaultMode();
+    this.settingsPanel.setProjectionLocked(false);
+    this.settingsPanel.setFitButtonVisible(true);
+
+    if (!this.assemblyController) {
+      this.assemblyController = new AssemblyController(
+        this.ctx.renderer,
+        this.ctx.camera,
+        () => this.ctx.requestRender(),
+      );
+    }
+    const container = this.assemblyController.getContainer();
+    if (!container.parent) {
+      this.ctx.scene.add(container);
+    }
+
+    this.assemblyController.update(sceneObjects, assembly);
+
+    if (!this.hasRendered) {
+      const box = new Box3();
+      expandBoxExcludingMeta(box, this.assemblyController.getContainer());
       if (!box.isEmpty() && !this.isBoxContained(box)) {
         this.ctx.fitToBox(box, true);
         this.lastFitBox = box.clone();

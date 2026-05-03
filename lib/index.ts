@@ -1,4 +1,5 @@
 import { Scene } from "./rendering/scene.js";
+import { AssemblyScene } from "./rendering/assembly-scene.js";
 import { loadOC } from "./load.js";
 import { createManager, getCurrentScene } from "./scene-manager.js";
 import { SceneObject, SourceLocation } from "./common/scene-object.js";
@@ -74,6 +75,9 @@ export function registerBuilder<T extends Function>(builder: (context: ScenePars
   const fn: Function = function() {
 
     let scene = getCurrentScene();
+    if (scene instanceof AssemblyScene && !scene.getActivePart()) {
+      throw new Error("This command is part-design only and cannot be used at the top level of an *.assembly.js file.");
+    }
     const sourceLocation = captureSourceLocation();
 
     const context: SceneParserContext = {

@@ -1,11 +1,11 @@
 import { captureSourceLocation } from "../index.js";
 import { getCurrentScene } from "../scene-manager.js";
 import { Part } from "../features/part.js";
-import { ISceneObject } from "./interfaces.js";
+import { IPart } from "./interfaces.js";
 
 type Extend<T> = T extends object ? { features: T } : {};
 
-function part<T>(name: string, callback: () => T): ISceneObject & Extend<T> {
+function part<T>(name: string, callback: () => T): IPart & Extend<T> {
   const scene = getCurrentScene();
   if (!scene) {
     throw new Error("part() must be called within a scene context");
@@ -24,7 +24,7 @@ function part<T>(name: string, callback: () => T): ISceneObject & Extend<T> {
     (partObj as any).features = extensions;
   }
 
-  return partObj as unknown as ISceneObject & Extend<T>;
+  return partObj as unknown as IPart & Extend<T>;
 }
 
 export default part;

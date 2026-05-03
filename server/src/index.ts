@@ -10,7 +10,7 @@ import { createExportRouter } from './routes/export.ts';
 import { createScreenshotRouter } from './routes/screenshot.ts';
 import { createPreferencesRouter } from './routes/preferences.ts';
 import { normalizePath } from './normalize-path.ts';
-import type { CompileError, ServerToUIMessage } from './ws-protocol.ts';
+import type { CompileError, SerializedAssembly, ServerToUIMessage } from './ws-protocol.ts';
 import { detectKind } from './file-kind.ts';
 import type { FluidScriptKind } from './file-kind.ts';
 import { extractSourceLocation } from '../../lib/dist/index.js';
@@ -173,16 +173,24 @@ wss.on('connection', (ws) => {
 
 let currentFile: string | null = null;
 let renderVersion = 0;
-const lastSceneByFile = new Map<string, { result: any[]; rollbackStop: number; sceneKind: FluidScriptKind }>();
+const lastSceneByFile = new Map<string, { result: any[]; rollbackStop: number; sceneKind: FluidScriptKind; assembly?: SerializedAssembly }>();
 
-function emitSuccess(absPath: string, sceneKind: FluidScriptKind, result: any[], rollbackStop: number, breakpointHit?: boolean) {
-  lastSceneByFile.set(absPath, { result, rollbackStop, sceneKind });
+function emitSuccess(
+  absPath: string,
+  sceneKind: FluidScriptKind,
+  result: any[],
+  rollbackStop: number,
+  breakpointHit?: boolean,
+  assembly?: SerializedAssembly,
+) {
+  lastSceneByFile.set(absPath, { result, rollbackStop, sceneKind, assembly });
   sendToExtension({
     type: 'scene-rendered',
     absPath,
     sceneKind,
     result,
     rollbackStop,
+    ...(assembly ? { assembly } : {}),
   });
   broadcastToUI({
     type: 'scene-rendered',
@@ -191,6 +199,7 @@ function emitSuccess(absPath: string, sceneKind: FluidScriptKind, result: any[],
     sceneKind,
     rollbackStop,
     breakpointHit,
+    ...(assembly ? { assembly } : {}),
   });
 }
 
@@ -220,6 +229,7 @@ function emitCompileError(filePath: string, err: any) {
   const result = prev?.result ?? [];
   const rollbackStop = prev?.rollbackStop ?? -1;
   const sceneKind = prev?.sceneKind ?? detectKind(key) ?? 'part';
+  const assembly = prev?.assembly;
   sendToExtension({
     type: 'scene-rendered',
     absPath: key,
@@ -227,6 +237,7 @@ function emitCompileError(filePath: string, err: any) {
     result,
     rollbackStop,
     compileError,
+    ...(assembly ? { assembly } : {}),
   });
   broadcastToUI({
     type: 'scene-rendered',
@@ -235,6 +246,7 @@ function emitCompileError(filePath: string, err: any) {
     sceneKind,
     rollbackStop,
     compileError,
+    ...(assembly ? { assembly } : {}),
   });
 }
 
@@ -249,7 +261,7 @@ async function handleExtensionMessage(msg: any) {
           const data = await fluidCadServer.processFile(msg.filePath);
           if (myVersion !== renderVersion) { return; }
           if (data) {
-            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit);
+            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit, data.assembly);
           }
         } catch (err) {
           if (myVersion !== renderVersion) { return; }
@@ -268,7 +280,7 @@ async function handleExtensionMessage(msg: any) {
           const data = await fluidCadServer.updateLiveCode(msg.fileName, msg.code);
           if (myVersion !== renderVersion) { return; }
           if (data) {
-            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit);
+            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit, data.assembly);
           }
         } catch (err) {
           if (myVersion !== renderVersion) { return; }
@@ -282,7 +294,7 @@ async function handleExtensionMessage(msg: any) {
         const data = await fluidCadServer.rollback(msg.fileName, msg.index);
         if (myVersion !== renderVersion) { return; }
         if (data) {
-          emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop);
+          emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, undefined, data.assembly);
         }
         break;
       }

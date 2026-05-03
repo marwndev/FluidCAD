@@ -2,7 +2,8 @@ export type {
   ISceneObject, ITransformable, IBooleanOperation, IPlane, IAxis, ISelect,
   IGeometry, IExtrudableGeometry, IRect, ISlot, IPolygon,
   ITwoObjectsTangentLine, ITangentArcTwoObjects,
-  IExtrude, ICut, ICommon, ISweep, ILoft, IRevolve, IDraft
+  IExtrude, ICut, ICommon, ISweep, ILoft, IRevolve, IDraft,
+  IConnector, IPart
 } from "./interfaces.js";
 export { default as axis } from "./axis.js";
 export { default as local } from "./local.js";
@@ -35,5 +36,7 @@ export { default as split } from "./split.js";
 export { default as trim } from "./trim.js";
 export { default as part } from "./part.js";
 export { default as connector } from "./connector.js";
+export { default as insert } from "./insert.js";
+export { default as mate } from "./mate.js";
 export * from "./2d/index.js";
 export { breakpoint } from "./breakpoint.js";

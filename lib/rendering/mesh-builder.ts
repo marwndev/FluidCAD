@@ -34,7 +34,9 @@ export class MeshBuilder {
       console.warn("Shell shapes are not supported yet.");
     }
     else if (Explorer.isVertex(shape)) {
-      console.warn("Vertex shapes are not supported yet.");
+      // Vertices have no triangulated mesh by definition. Connectors and
+      // other features emit meta vertices for selection/hit-testing only;
+      // the UI draws their gizmos from the serialized payload.
     }
     else {
       console.warn("Shape is not a valid TopoDS_Shape.");

@@ -91,6 +91,7 @@ export function createActionsRouter(
       sceneKind: data.sceneKind,
       result: data.result,
       rollbackStop: data.rollbackStop,
+      ...(data.assembly ? { assembly: data.assembly } : {}),
     });
     broadcastToUI({
       type: 'scene-rendered',
@@ -98,6 +99,7 @@ export function createActionsRouter(
       absPath: data.absPath,
       sceneKind: data.sceneKind,
       rollbackStop: data.rollbackStop,
+      ...(data.assembly ? { assembly: data.assembly } : {}),
     });
     res.json({ success: true });
   });
@@ -114,6 +116,7 @@ export function createActionsRouter(
       sceneKind: data.sceneKind,
       result: data.result,
       rollbackStop: data.rollbackStop,
+      ...(data.assembly ? { assembly: data.assembly } : {}),
     });
     broadcastToUI({
       type: 'scene-rendered',
@@ -121,6 +124,7 @@ export function createActionsRouter(
       absPath: data.absPath,
       sceneKind: data.sceneKind,
       breakpointHit: data.breakpointHit,
+      ...(data.assembly ? { assembly: data.assembly } : {}),
     });
     res.json({ success: true });
   });

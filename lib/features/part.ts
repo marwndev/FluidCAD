@@ -1,7 +1,8 @@
 import { BuildSceneObjectContext, SceneObject } from "../common/scene-object.js";
 import { Connector } from "./connector.js";
+import { IPart } from "../core/interfaces.js";
 
-export class Part extends SceneObject {
+export class Part extends SceneObject implements IPart {
   constructor(public partName: string) {
     super();
     this.name(partName);

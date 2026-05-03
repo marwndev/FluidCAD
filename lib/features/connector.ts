@@ -77,4 +77,19 @@ export class Connector extends SceneObject implements IConnector {
       normal: frame.normal,
     };
   }
+
+  boundTo(instanceId: string): BoundConnector {
+    return new BoundConnector(this, instanceId);
+  }
+}
+
+export class BoundConnector {
+  constructor(
+    public readonly connector: Connector,
+    public readonly instanceId: string,
+  ) {}
+
+  getFrame(): Plane {
+    return this.connector.getFrame();
+  }
 }
