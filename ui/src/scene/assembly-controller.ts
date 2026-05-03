@@ -1,12 +1,15 @@
 import { Box3, Camera, Group, Object3D, Plane, Quaternion, Raycaster, Vector2, Vector3, WebGLRenderer } from 'three';
-import { SceneObjectRender, SerializedAssembly, SerializedAssemblyInstance } from '../types';
+import { ConnectorData, SceneObjectRender, SerializedAssembly, SerializedAssemblyInstance } from '../types';
 import { buildObjectMesh } from '../meshes/mesh-factory';
+import { Solver } from '../solver';
+import type { BodyState, ConnectorState, SolverInput, SolverOutput } from '../solver';
 
 const DRAG_THRESHOLD_PX = 4;
 
 type InstanceState = {
   data: SerializedAssemblyInstance;
   group: Group;
+  connectors: ConnectorState[];
 };
 
 export type InstanceDragReleaseHandler = (
@@ -16,6 +19,8 @@ export type InstanceDragReleaseHandler = (
 
 export type InstanceDragClaimHandler = () => void;
 
+export type SolverUpdateHandler = (output: SolverOutput) => void;
+
 export class AssemblyController {
   private container = new Group();
   private instances = new Map<string, InstanceState>();
@@ -23,6 +28,8 @@ export class AssemblyController {
   private allObjects: SceneObjectRender[] = [];
   private dragReleaseHandler: InstanceDragReleaseHandler | null = null;
   private dragClaimHandler: InstanceDragClaimHandler | null = null;
+  private solverUpdateHandler: SolverUpdateHandler | null = null;
+  private solver = new Solver();
   /**
    * Set on pointerup to the instanceId whose drag just ended (or `null`
    * once consumed / between gestures). Read via {@link consumeRecentDrag}:
@@ -51,6 +58,11 @@ export class AssemblyController {
   ) {
     this.container.name = 'assemblyContainer';
     this.attachPointerHandlers();
+    // Kick off the WASM load so the first drag doesn't pay the latency.
+    // Failures aren't fatal — the controller falls back to free-body drag.
+    this.solver.ensureReady().catch((err) => {
+      console.error('Failed to load solvespace solver:', err);
+    });
   }
 
   getContainer(): Group {
@@ -84,9 +96,11 @@ export class AssemblyController {
     }
 
     for (const inst of assembly.instances) {
+      const connectors = this.collectConnectorStates(inst.partId);
       const existing = this.instances.get(inst.instanceId);
       if (existing) {
         existing.data = inst;
+        existing.connectors = connectors;
         existing.group.userData.grounded = inst.grounded;
         existing.group.userData.draggable = !inst.grounded;
         if (this.dragState?.instanceId !== inst.instanceId) {
@@ -99,9 +113,14 @@ export class AssemblyController {
       }
       const group = this.buildInstanceGroup(inst);
       if (!group) continue;
-      this.instances.set(inst.instanceId, { data: inst, group });
+      this.instances.set(inst.instanceId, { data: inst, group, connectors });
       this.container.add(group);
     }
+
+    // Kick a no-drag solve so the DOF readout reflects the current state.
+    // No-op for poses while phase 05 has no mates, but the solver result
+    // (DOF, okay/inconsistent) still informs the footer pill.
+    this.scheduleSolverRefresh();
   }
 
   clear(): void {
@@ -112,6 +131,93 @@ export class AssemblyController {
     this.instances.clear();
     this.partTemplates.clear();
     this.allObjects = [];
+  }
+
+  private collectConnectorStates(partId: string): ConnectorState[] {
+    const out: ConnectorState[] = [];
+    for (const obj of this.allObjects) {
+      if (obj.type !== 'connector' || obj.parentId !== partId || !obj.id) continue;
+      const data = obj.object as ConnectorData | undefined;
+      if (!data) continue;
+      out.push({
+        connectorId: obj.id,
+        localOrigin: new Vector3(data.origin.x, data.origin.y, data.origin.z),
+        localXDirection: new Vector3(data.xDirection.x, data.xDirection.y, data.xDirection.z),
+        localNormal: new Vector3(data.normal.x, data.normal.y, data.normal.z),
+      });
+    }
+    return out;
+  }
+
+  private buildSolverInput(
+    draggedInstanceId?: string,
+    draggedTargetOrigin?: Vector3,
+  ): SolverInput {
+    const bodies: BodyState[] = [];
+    for (const state of this.instances.values()) {
+      bodies.push({
+        instanceId: state.data.instanceId,
+        position: state.group.position.clone(),
+        quaternion: state.group.quaternion.clone(),
+        grounded: state.data.grounded,
+        connectors: state.connectors,
+      });
+    }
+    return {
+      bodies,
+      mates: [],
+      draggedInstanceId,
+      draggedTargetOrigin,
+    };
+  }
+
+  private applySolverOutput(out: SolverOutput): void {
+    if (out.result !== 'okay') return;
+    for (const solved of out.bodies) {
+      const state = this.instances.get(solved.instanceId);
+      if (!state) continue;
+      state.group.position.copy(solved.position);
+      state.group.quaternion.copy(solved.quaternion);
+    }
+  }
+
+  private scheduleSolverRefresh(): void {
+    if (!this.solver.isReady()) {
+      // Wait for the WASM and try again. Don't block the render path.
+      this.solver.ensureReady().then(() => this.runSolverRefresh()).catch(() => {});
+      return;
+    }
+    this.runSolverRefresh();
+  }
+
+  private runSolverRefresh(): void {
+    if (this.instances.size === 0) {
+      this.solverUpdateHandler?.({
+        bodies: [],
+        result: 'okay',
+        dof: 0,
+        failed: [],
+      });
+      return;
+    }
+    try {
+      const input = this.buildSolverInput();
+      const out = this.solver.solve(input);
+      this.applySolverOutput(out);
+      this.requestRender();
+      this.solverUpdateHandler?.(out);
+    } catch (err) {
+      console.error('Solver refresh failed:', err);
+    }
+  }
+
+  setSolverUpdateHandler(handler: SolverUpdateHandler | null): void {
+    this.solverUpdateHandler = handler;
+    // Replay the latest state so a freshly-attached panel sees the current
+    // DOF without waiting for the next render or drag.
+    if (handler && this.solver.isReady() && this.instances.size > 0) {
+      this.runSolverRefresh();
+    }
   }
 
   private buildInstanceGroup(inst: SerializedAssemblyInstance): Group | null {
@@ -211,7 +317,34 @@ export class AssemblyController {
     if (!raycaster.ray.intersectPlane(this.dragState.plane, intersection)) {
       return;
     }
-    state.group.position.copy(intersection.add(this.dragState.grabOffset));
+    // Convert cursor world point → body origin target using the grab
+    // offset captured at drag-start. `grabOffset = origin_start - grab_start`
+    // is constant across the gesture, so we just add it to the cursor
+    // intersection. Re-deriving the offset from the live origin every
+    // frame would drift each move (the body has already moved by the prior
+    // frame's solve).
+    const targetOrigin = intersection.clone().add(this.dragState.grabOffset);
+
+    if (this.solver.isReady()) {
+      const input = this.buildSolverInput(
+        this.dragState.instanceId,
+        targetOrigin,
+      );
+      const out = this.solver.solve(input);
+      if (out.result === 'okay') {
+        this.applySolverOutput(out);
+      } else {
+        // Solver rejected the drag — keep last good pose and let the user
+        // drag back into a valid configuration. Phase 06+ flashes the
+        // failing mate via the update handler; phase 05 just reports the
+        // status and leaves the body where it was.
+      }
+      this.solverUpdateHandler?.(out);
+    } else {
+      // Solver hasn't loaded yet — fall back to free-body translation so
+      // the user isn't blocked. Becomes solver-driven once WASM resolves.
+      state.group.position.copy(targetOrigin);
+    }
     this.requestRender();
     e.stopImmediatePropagation();
   };

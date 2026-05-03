@@ -59,6 +59,7 @@
     "color-name": "^2.1.0",
     "express": "^5.2.1",
     "occjs-wrapper": "npm:occjs-fluidcad@8.0.0",
+    "solvespace-wasm": "file:../solvespace-wasm",
     "stacktrace-parser": "^0.1.11",
     "tree-sitter-wasms": "^0.1.13",
     "tsx": "^4.21.0",

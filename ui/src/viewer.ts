@@ -3,7 +3,7 @@ import { FIT_PADDING, SceneContext } from './scene/scene-context';
 import { SceneModeManager } from './scene/scene-mode';
 import { buildSceneMesh } from './meshes/mesh-factory';
 import { SceneObjectPart, SceneObjectRender, SerializedAssembly, SubSelection } from './types';
-import { AssemblyController, InstanceDragReleaseHandler } from './scene/assembly-controller';
+import { AssemblyController, InstanceDragReleaseHandler, SolverUpdateHandler } from './scene/assembly-controller';
 import { SettingsPanel } from './ui/settings-panel';
 import { CentroidIndicator } from './scene/centroid-indicator';
 import { viewerSettings } from './scene/viewer-settings';
@@ -79,6 +79,7 @@ export class Viewer {
   private shapeOpacities = new Map<string, number>();
   private assemblyController: AssemblyController | null = null;
   private pendingDragReleaseHandler: InstanceDragReleaseHandler | null = null;
+  private pendingSolverUpdateHandler: SolverUpdateHandler | null = null;
 
   constructor(containerId: string) {
     const container = document.getElementById(containerId)!;
@@ -415,6 +416,11 @@ export class Viewer {
     this.assemblyController?.setDragReleaseHandler(handler);
   }
 
+  setSolverUpdateHandler(handler: SolverUpdateHandler | null): void {
+    this.pendingSolverUpdateHandler = handler;
+    this.assemblyController?.setSolverUpdateHandler(handler);
+  }
+
   updateAssemblyView(sceneObjects: SceneObjectRender[], assembly: SerializedAssembly): void {
     this.sceneObjects = sceneObjects;
     this.highlightedShapeId = null;
@@ -436,6 +442,7 @@ export class Viewer {
         (ndcX, ndcY) => this.ctx.createPickingRaycaster(ndcX, ndcY),
       );
       this.assemblyController.setDragReleaseHandler(this.pendingDragReleaseHandler);
+      this.assemblyController.setSolverUpdateHandler(this.pendingSolverUpdateHandler);
       // When the controller claims a drag, eagerly clear any face/edge/instance
       // highlight that was set earlier (e.g. by a prior click or parts-panel
       // row). Otherwise it would visually "stick" through the drag and the

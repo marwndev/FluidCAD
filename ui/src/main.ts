@@ -288,6 +288,27 @@ viewer.setInstanceDragReleaseHandler((instanceId, position) => {
   });
 });
 
+viewer.setSolverUpdateHandler((output) => {
+  if (currentRail?.kind !== 'assembly') return;
+  if (output.result === 'okay') {
+    currentRail.dof.update({ result: 'okay', dof: output.dof });
+  } else if (output.result === 'inconsistent') {
+    const failed = output.failed.map((mateId) => {
+      const mate = findMate(mateId);
+      return { mateId, label: mate ? formatMateLabel(mate) : mateId };
+    });
+    currentRail.dof.update({ result: 'inconsistent', dof: output.dof, failed });
+  } else {
+    // didnt-converge / too-many-unknowns — surface as inconsistent so the
+    // user sees the assembly is unhealthy. No mate-specific failure list.
+    currentRail.dof.update({ result: 'inconsistent', dof: output.dof, failed: [] });
+  }
+});
+
+function formatMateLabel(mate: { type: string; mateId: string }): string {
+  return `${mate.type} (${mate.mateId})`;
+}
+
 viewer.setSelectionHandler((shapeId, sub, instanceId) => {
   if (shapeId) {
     if (shapePropertiesModal.isOpen) {
