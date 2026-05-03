@@ -57,8 +57,31 @@ export type SolverInput = {
    * captured at drag-start (`origin_start - grab_start`); the solver does
    * not re-derive it. This avoids the offset drifting as the body moves
    * across successive solves.
+   *
+   * Used by free-body slvs `dragged[]` pinning. Mate-aware drag handlers
+   * use `draggedCursorWorld` + `draggedGrabLocal` instead — see those
+   * fields for why.
    */
   draggedTargetOrigin?: Vector3;
+  /**
+   * Raw cursor world position on the drag plane. JS-side mate handlers
+   * (warm-start) read this together with `draggedGrabLocal` so the
+   * rotation they apply makes the *grab point* track the cursor.
+   *
+   * Why not just `draggedTargetOrigin`? Because deriving rotation from
+   * body-origin motion produces the wrong sign whenever the grab is on
+   * the opposite side of the pivot from the body origin. Using the
+   * grab point's world position as the "from" of the rotation arc is
+   * the only formulation that's sign-correct everywhere.
+   */
+  draggedCursorWorld?: Vector3;
+  /**
+   * The grabbed point in the dragged body's *local* frame, captured at
+   * drag-start. Combined with the body's live pose this gives the
+   * grab point's current world position, which mate-aware drag handlers
+   * use as the "from" of the rotation arc.
+   */
+  draggedGrabLocal?: Vector3;
 };
 
 export type SolverResult = 'okay' | 'inconsistent' | 'didnt-converge' | 'too-many-unknowns';

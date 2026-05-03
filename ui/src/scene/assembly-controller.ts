@@ -45,7 +45,15 @@ export class AssemblyController {
   private dragState: {
     instanceId: string;
     plane: Plane;
+    /** Vector from grab-point world position to body origin, captured at
+     *  drag-start. Free-body translation uses this to convert cursor world
+     *  → body origin target each frame. */
     grabOffset: Vector3;
+    /** Grab point in the body's *local* frame (at drag-start). Combined
+     *  with the body's live pose this gives the grab point's current world
+     *  position, which is what mate-aware drag handlers need to compute
+     *  the rotation that makes the grab point track the cursor. */
+    grabLocal: Vector3;
     moved: boolean;
     downX: number;
     downY: number;
@@ -285,11 +293,17 @@ export class AssemblyController {
     planeNormal.negate();
     const plane = new Plane().setFromNormalAndCoplanarPoint(planeNormal, hit.worldPoint);
     const grabOffset = state.group.position.clone().sub(hit.worldPoint);
+    // Body-local grab: invert the body pose to express the hit point in
+    // the body's frame. Stays valid as the body moves/rotates.
+    const grabLocal = hit.worldPoint.clone()
+      .sub(state.group.position)
+      .applyQuaternion(state.group.quaternion.clone().invert());
 
     this.dragState = {
       instanceId: hit.instanceId,
       plane,
       grabOffset,
+      grabLocal,
       moved: false,
       downX: e.clientX,
       downY: e.clientY,
@@ -329,10 +343,19 @@ export class AssemblyController {
     const targetOrigin = intersection.clone().add(this.dragState.grabOffset);
 
     if (this.solver.isReady()) {
-      const input = this.buildSolverInput(
-        this.dragState.instanceId,
-        targetOrigin,
-      );
+      // Free-body / position-pin path: pass `targetOrigin` so slvs's
+      // dragged[] anchors the body origin to the cursor (offset by grab).
+      // Mate-aware path: also pass the cursor world point and body-local
+      // grab so JS-side mate handlers (e.g. revolute) can compute the
+      // rotation that makes the *grab point* — not the body origin —
+      // track the cursor. Body-origin tracking gives the wrong sign
+      // whenever the grab is on the opposite side of the pivot from
+      // the body origin; the grab-point formulation never does.
+      const input: SolverInput = {
+        ...this.buildSolverInput(this.dragState.instanceId, targetOrigin),
+        draggedCursorWorld: intersection.clone(),
+        draggedGrabLocal: this.dragState.grabLocal.clone(),
+      };
       const out = this.solver.solve(input);
       if (out.result === 'okay') {
         this.applySolverOutput(out);

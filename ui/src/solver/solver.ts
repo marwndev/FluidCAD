@@ -9,7 +9,12 @@
 import { GROUP_ACTIVE, buildSystem, readBackPoses, type BodyHandles, type BuiltSystem } from './system-builder.js';
 import { loadSolveSpace, type SolveSpaceApi } from './solvespace-loader.js';
 import type { SolverInput, SolverOutput, SolverResult } from './types.js';
-import { applyFastenedFixup, applyFastenedWarmStarts } from './warm-start.js';
+import {
+  applyFastenedFixup,
+  applyFastenedWarmStarts,
+  applyRevoluteFixup,
+  applyRevoluteWarmStarts,
+} from './warm-start.js';
 
 export class Solver {
   private api: SolveSpaceApi | null = null;
@@ -39,6 +44,17 @@ export class Solver {
     // a face-to-face flip). Pre-compute follower pose in JS, freeze its
     // quat params, and let slvs handle position propagation only.
     applyFastenedWarmStarts(input.bodies, input.mates, input.draggedInstanceId);
+    // Revolute is also handled JS-side (the slvs encoding can't represent
+    // off-xy-plane connectors faithfully). The warm-start fully determines
+    // the follower's pose — including converting drag-of-follower into a
+    // rotation about the pivot Z — and locks both position and orientation
+    // so slvs treats the follower as a constant. The 1 free DOF the mate
+    // contributes is added back into the reported DOF below.
+    applyRevoluteWarmStarts(input.bodies, input.mates, {
+      draggedInstanceId: input.draggedInstanceId,
+      draggedCursorWorld: input.draggedCursorWorld,
+      draggedGrabLocal: input.draggedGrabLocal,
+    });
     const built = buildSystem(this.api, input);
 
     if (input.draggedInstanceId && input.draggedTargetOrigin) {
@@ -60,10 +76,16 @@ export class Solver {
     }
 
     const out = this.readResult(built);
-    // Re-apply the fastened relation against the *solved* driver pose so
-    // followers track drivers across drags. (See warm-start.ts for why
-    // slvs constraints are unsuitable for fastened mates.)
+    // Revolute fixup runs first so a chain like A → revolute → B →
+    // fastened → C propagates A's solved pose all the way to C: B's
+    // pose is updated here, then the fastened fixup picks up the
+    // updated B as driver.
+    applyRevoluteFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
     applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
+    // Each revolute mate contributes 1 DOF that slvs can't see (the
+    // follower's params are all locked). Add them in so the footer reads
+    // the geometric DOF rather than slvs's internal accounting.
+    out.dof += countRevoluteFreeDof(input);
     return out;
   }
 
@@ -134,6 +156,26 @@ export class Solver {
       failed,
     };
   }
+}
+
+/**
+ * Sum the free DOF contributed by revolute mates (1 per mate where at
+ * least one of the two bodies is non-grounded). Both-grounded revolutes
+ * carry no DOF (immovable pair), and follow the same pattern as
+ * fastened — they don't get warm-started, so we skip them too.
+ */
+function countRevoluteFreeDof(input: SolverInput): number {
+  const byId = new Map(input.bodies.map(b => [b.instanceId, b]));
+  let extra = 0;
+  for (const mate of input.mates) {
+    if (mate.type !== 'revolute') continue;
+    const a = byId.get(mate.connectorA.instanceId);
+    const b = byId.get(mate.connectorB.instanceId);
+    if (!a || !b) continue;
+    if (a.grounded && b.grounded) continue;
+    extra += 1;
+  }
+  return extra;
 }
 
 function hasActiveParamsImpl(sys: any): boolean {

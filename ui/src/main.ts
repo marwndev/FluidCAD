@@ -224,6 +224,16 @@ function findMate(mateId: string) {
   return lastAssemblyPayload?.mates.find(m => m.mateId === mateId);
 }
 
+function instanceHasMate(instanceId: string): boolean {
+  if (!lastAssemblyPayload) return false;
+  for (const m of lastAssemblyPayload.mates) {
+    if (m.connectorA.instanceId === instanceId || m.connectorB.instanceId === instanceId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function defaultNameFor(inst: { partName: string; instanceId: string }): string {
   // The part-side default name; matches `Part.partName`. Used so that
   // renaming back to the original drops the `.name(...)` chained call.
@@ -313,6 +323,17 @@ shapePropertiesModal.setCentroidHandler((centroid) => {
 viewer.setInstanceDragReleaseHandler((instanceId, position) => {
   const inst = findInstance(instanceId);
   if (!inst?.sourceLocation) return;
+  // For mate-constrained ungrounded bodies, position is mate-derived and
+  // rotation is the meaningful drag dimension. Persisting `.at(...)`
+  // would write the post-solve position into the source while losing the
+  // rotation entirely (`.orient()` doesn't exist yet), so on reload the
+  // body would snap back to identity orientation at the persisted
+  // position — visibly undoing the drag. Until rotation persistence
+  // exists, leave such instances at their default in source and let the
+  // mate warm-start re-derive the pose from the driver.
+  if (!inst.grounded && instanceHasMate(instanceId)) {
+    return;
+  }
   updateInsertChain(inst.sourceLocation, {
     at: [position.x, position.y, position.z],
   });

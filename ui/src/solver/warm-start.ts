@@ -36,6 +36,268 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
 import type { BodyState, ConnectorState, MateRecord, SolvedBody } from './types.js';
 
 /**
+ * Revolute warm-start.
+ *
+ * Like fastened, revolute is solved analytically in JS rather than via
+ * slvs. The motivation is the same: slvs's POINT_IN_2D entities project
+ * the connector's local Z component to zero, which silently breaks face
+ * coincidence for any connector that lives above/below the body's xy
+ * plane (top/bottom/side faces — the common case in user-authored parts).
+ *
+ * Per solve:
+ *   1. Pick a driver / follower for each revolute mate.
+ *   2. If the follower is being dragged, convert the cursor target into
+ *      the corresponding rotation angle about the driver's connector Z
+ *      axis. This is what lets the user "spin" the follower with the
+ *      mouse without slvs ever seeing a constraint.
+ *   3. Recompute the follower's body pose from the (possibly rotated)
+ *      orientation so the connector frames meet (face-to-face by default,
+ *      back-to-back on `.flip()`, with `.rotate()` as the initial seed
+ *      for fresh assemblies).
+ *   4. Set `lockPosition` and `lockOrientation` so slvs treats the
+ *      follower's params as constants. The 1 free DOF the revolute
+ *      contributes is added back to slvs's reported DOF in `Solver.solve()`.
+ *
+ * The post-solve fixup (`applyRevoluteFixup`) reapplies the analytical
+ * relation against the *solved* driver pose so a drag of the driver
+ * pulls the follower along.
+ */
+export type RevoluteDragInfo = {
+  draggedInstanceId?: string;
+  /** Raw cursor world position on the drag plane. */
+  draggedCursorWorld?: Vector3;
+  /** Grab point in body-local frame. */
+  draggedGrabLocal?: Vector3;
+};
+
+export function applyRevoluteWarmStarts(
+  bodies: BodyState[],
+  mates: MateRecord[],
+  drag: RevoluteDragInfo = {},
+): void {
+  const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
+  const byId = new Map(bodies.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'revolute') continue;
+    const aBody = byId.get(mate.connectorA.instanceId);
+    const bBody = byId.get(mate.connectorB.instanceId);
+    if (!aBody || !bBody) continue;
+    const aConn = aBody.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId);
+    if (!roles) continue;
+    const { driver, follower, driverConn, followerConn } = roles;
+    const options = mate.options ?? {};
+
+    // Initial seed (face-to-face / flipped chirality, plus `.rotate()`
+    // angle) only when current pose doesn't satisfy the mate. After that
+    // we preserve the orientation across solves so drags are persistent
+    // and `.rotate()` truly is a hint, not a snap-back.
+    if (!isRevoluteSatisfied(driver, follower, driverConn, followerConn, options)) {
+      const seed = computeFastenedTargetPose(driver, driverConn, followerConn, options);
+      follower.position = seed.position;
+      follower.quaternion = seed.quaternion;
+    }
+
+    // Drag of the follower: rotate it about the pivot Z by the angle that
+    // makes the *grab point* track the cursor. Using the grab point
+    // (rather than body origin) is what gives a sign-correct rotation
+    // regardless of which side of the pivot the user grabbed from.
+    if (
+      draggedCursorWorld
+      && draggedGrabLocal
+      && draggedInstanceId === follower.instanceId
+      && !follower.grounded
+    ) {
+      rotateFollowerToward(driver, follower, driverConn, draggedCursorWorld, draggedGrabLocal);
+    }
+
+    // Re-derive position from the (possibly rotated) orientation so the
+    // connector frames truly coincide in world space, regardless of which
+    // path set the orientation above.
+    follower.position = followerPositionFromOrientation(
+      driver, driverConn, followerConn, follower.quaternion, options,
+    );
+
+    // Slvs treats revolute followers as constants; the 1 free DOF is
+    // added to the reported DOF count by Solver.solve().
+    follower.lockPosition = true;
+    follower.lockOrientation = true;
+  }
+}
+
+/**
+ * Re-derive each revolute follower's pose from the *solved* driver pose.
+ * This is what carries a drag of the driver through to the follower —
+ * slvs only saw the driver's params; the follower stayed wherever the
+ * warm-start put it. The fixup snaps the follower onto the manifold
+ * defined by the now-current driver pose.
+ *
+ * Runs before the fastened fixup so a chain of revolute → fastened
+ * propagates correctly (the fastened side reads the revolute follower's
+ * fixed-up pose, not its stale warm-started pose).
+ */
+export function applyRevoluteFixup(
+  inputBodies: BodyState[],
+  out: SolvedBody[],
+  mates: MateRecord[],
+  draggedInstanceId?: string,
+): void {
+  const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
+  const outById = new Map(out.map(b => [b.instanceId, b]));
+  for (const mate of mates) {
+    if (mate.type !== 'revolute') continue;
+    const aInput = inputById.get(mate.connectorA.instanceId);
+    const bInput = inputById.get(mate.connectorB.instanceId);
+    if (!aInput || !bInput) continue;
+    const aConn = aInput.connectors.find(c => c.connectorId === mate.connectorA.connectorId);
+    const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
+    if (!aConn || !bConn) continue;
+
+    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId);
+    if (!roles) continue;
+    const driverOut = outById.get(roles.driver.instanceId);
+    const followerOut = outById.get(roles.follower.instanceId);
+    if (!driverOut || !followerOut) continue;
+
+    const driverState: BodyState = {
+      ...roles.driver,
+      position: driverOut.position,
+      quaternion: driverOut.quaternion,
+    };
+    // Keep the follower's solved orientation (which equals warm-start's
+    // because we locked it) and re-derive position from the driver's
+    // possibly-updated pose.
+    followerOut.position = followerPositionFromOrientation(
+      driverState, roles.driverConn, roles.followerConn, followerOut.quaternion,
+      mate.options ?? {},
+    );
+  }
+}
+
+const REVOLUTE_EPS = 1e-4;
+
+function isRevoluteSatisfied(
+  driver: BodyState,
+  follower: BodyState,
+  driverConn: ConnectorState,
+  followerConn: ConnectorState,
+  options: { rotate?: number; flip?: boolean; offset?: [number, number, number] },
+): boolean {
+  const dOriginWorld = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const dZWorld = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+  const fOriginWorld = followerConn.localOrigin.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  const fZWorld = followerConn.localNormal.clone()
+    .applyQuaternion(follower.quaternion).normalize();
+
+  let target = dOriginWorld.clone();
+  if (options.offset) {
+    const dXWorld = driverConn.localXDirection.clone()
+      .applyQuaternion(driver.quaternion).normalize();
+    const dYWorld = new Vector3().crossVectors(dZWorld, dXWorld).normalize();
+    const [ox, oy, oz] = options.offset;
+    target.addScaledVector(dXWorld, ox)
+      .addScaledVector(dYWorld, oy)
+      .addScaledVector(dZWorld, oz);
+  }
+
+  if (fOriginWorld.distanceTo(target) > REVOLUTE_EPS) return false;
+  // The two valid chiralities (parallel vs anti-parallel Z) both count as
+  // satisfied here — the chirality is set by the initial seed and
+  // preserved by the warm-start preserving the follower's quaternion.
+  return Math.abs(Math.abs(fZWorld.dot(dZWorld)) - 1) < REVOLUTE_EPS;
+}
+
+/**
+ * Rotate the follower about the driver-connector Z axis by the angle
+ * that makes the *grab point* track the cursor.
+ *
+ * Why grab point and not body origin: when the user clicks on a part
+ * far from the body's coordinate origin (e.g., the right-hand end of a
+ * long bar mated at its center), the body origin and the grab point
+ * are on opposite sides of the pivot. A rotation that moves the body
+ * origin to "cursor + grabOffset" then moves the grab point in the
+ * *opposite* direction along its arc — visibly rotating the body the
+ * wrong way under the cursor. Measuring the angle from the grab
+ * point's current world position to the cursor's world position
+ * eliminates this sign error regardless of where on the body the user
+ * grabbed.
+ */
+function rotateFollowerToward(
+  driver: BodyState,
+  follower: BodyState,
+  driverConn: ConnectorState,
+  cursorWorld: Vector3,
+  grabLocal: Vector3,
+): void {
+  const pivot = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  const axis = driverConn.localNormal.clone()
+    .applyQuaternion(driver.quaternion).normalize();
+
+  const grabWorld = grabLocal.clone()
+    .applyQuaternion(follower.quaternion).add(follower.position);
+  const fromVec = grabWorld.sub(pivot);
+  const fromInPlane = fromVec.clone()
+    .sub(axis.clone().multiplyScalar(fromVec.dot(axis)));
+  const toVec = cursorWorld.clone().sub(pivot);
+  const toInPlane = toVec.clone()
+    .sub(axis.clone().multiplyScalar(toVec.dot(axis)));
+
+  if (fromInPlane.length() < 1e-9 || toInPlane.length() < 1e-9) {
+    return;
+  }
+  fromInPlane.normalize();
+  toInPlane.normalize();
+
+  const cos = Math.min(1, Math.max(-1, fromInPlane.dot(toInPlane)));
+  const cross = new Vector3().crossVectors(fromInPlane, toInPlane);
+  // Sign of the angle: positive when cross is in the +axis direction.
+  const sin = cross.dot(axis);
+  const angle = Math.atan2(sin, cos);
+  if (Math.abs(angle) < 1e-9) return;
+
+  const dq = new Quaternion().setFromAxisAngle(axis, angle);
+  follower.quaternion = dq.multiply(follower.quaternion);
+}
+
+/**
+ * Returns the follower body position that would make follower-connector
+ * world position equal to (driver-connector world position + offset),
+ * given a fixed follower orientation.
+ */
+function followerPositionFromOrientation(
+  driver: BodyState,
+  driverConn: ConnectorState,
+  followerConn: ConnectorState,
+  followerQuat: Quaternion,
+  options: { rotate?: number; flip?: boolean; offset?: [number, number, number] },
+): Vector3 {
+  const dOriginWorld = driverConn.localOrigin.clone()
+    .applyQuaternion(driver.quaternion).add(driver.position);
+  let target = dOriginWorld.clone();
+  if (options.offset) {
+    const dZWorld = driverConn.localNormal.clone()
+      .applyQuaternion(driver.quaternion).normalize();
+    const dXWorld = driverConn.localXDirection.clone()
+      .applyQuaternion(driver.quaternion).normalize();
+    const dYWorld = new Vector3().crossVectors(dZWorld, dXWorld).normalize();
+    const [ox, oy, oz] = options.offset;
+    target.addScaledVector(dXWorld, ox)
+      .addScaledVector(dYWorld, oy)
+      .addScaledVector(dZWorld, oz);
+  }
+  return target.clone().sub(
+    followerConn.localOrigin.clone().applyQuaternion(followerQuat),
+  );
+}
+
+/**
  * Mutates each follower body in `bodies` so its pose is consistent with
  * its driver's pose under the fastened mate semantics. Sets
  * `lockOrientation = true` on every follower so the solver freezes its
