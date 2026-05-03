@@ -7,6 +7,12 @@ import { Sketch } from "./features/2d/sketch.js";
 import { Extrudable } from "./helpers/types.js";
 import { parse as parseStackTrace } from "stacktrace-parser";
 
+const SCRIPT_SUFFIXES = ['.part.js', '.assembly.js', '.fluid.js'];
+
+export function isFluidScriptFile(p: string): boolean {
+  return SCRIPT_SUFFIXES.some(s => p.endsWith(s));
+}
+
 export function captureSourceLocation(): SourceLocation | null {
   const stack = new Error().stack;
   if (!stack) {
@@ -36,7 +42,7 @@ export function extractSourceLocation(stack: string): SourceLocation | null {
       }
     }
 
-    if (!filePath.endsWith('.fluid.js')) {
+    if (!isFluidScriptFile(filePath)) {
       continue;
     }
 

@@ -112,6 +112,12 @@ export interface IAxis extends ISceneObject {}
 
 export interface ISelect extends ISceneObject {}
 
+/**
+ * A mate connector attached to a part — a coordinate frame the assembly
+ * pipeline can reference. Returned by the `connector(...)` DSL.
+ */
+export interface IConnector extends ISceneObject {}
+
 export interface IGeometry extends ISceneObject {
   /**
    * Marks this sketch geometry as construction geometry. Guide geometries are

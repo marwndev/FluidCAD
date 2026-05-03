@@ -88,6 +88,7 @@ export function createActionsRouter(
     sendToExtension({
       type: 'scene-rendered',
       absPath: data.absPath,
+      sceneKind: data.sceneKind,
       result: data.result,
       rollbackStop: data.rollbackStop,
     });
@@ -95,6 +96,7 @@ export function createActionsRouter(
       type: 'scene-rendered',
       result: data.result,
       absPath: data.absPath,
+      sceneKind: data.sceneKind,
       rollbackStop: data.rollbackStop,
     });
     res.json({ success: true });
@@ -109,6 +111,7 @@ export function createActionsRouter(
     sendToExtension({
       type: 'scene-rendered',
       absPath: data.absPath,
+      sceneKind: data.sceneKind,
       result: data.result,
       rollbackStop: data.rollbackStop,
     });
@@ -116,6 +119,7 @@ export function createActionsRouter(
       type: 'scene-rendered',
       result: data.result,
       absPath: data.absPath,
+      sceneKind: data.sceneKind,
       breakpointHit: data.breakpointHit,
     });
     res.json({ success: true });

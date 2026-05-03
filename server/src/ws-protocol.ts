@@ -87,6 +87,7 @@ export type CompileError = {
 export type SceneRenderedMessage = {
   type: 'scene-rendered';
   absPath: string;
+  sceneKind: 'part' | 'assembly';
   result: any[];
   rollbackStop: number;
   compileError?: CompileError;
@@ -179,6 +180,7 @@ export type UISceneRenderedMessage = {
   type: 'scene-rendered';
   result: any[];
   absPath: string;
+  sceneKind: 'part' | 'assembly';
   rollbackStop?: number;
   breakpointHit?: boolean;
   compileError?: CompileError;

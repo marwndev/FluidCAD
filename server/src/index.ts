@@ -11,6 +11,8 @@ import { createScreenshotRouter } from './routes/screenshot.ts';
 import { createPreferencesRouter } from './routes/preferences.ts';
 import { normalizePath } from './normalize-path.ts';
 import type { CompileError, ServerToUIMessage } from './ws-protocol.ts';
+import { detectKind } from './file-kind.ts';
+import type { FluidScriptKind } from './file-kind.ts';
 import { extractSourceLocation } from '../../lib/dist/index.js';
 
 const PORT = parseInt(process.env.FLUIDCAD_SERVER_PORT || '3100', 10);
@@ -171,13 +173,14 @@ wss.on('connection', (ws) => {
 
 let currentFile: string | null = null;
 let renderVersion = 0;
-const lastSceneByFile = new Map<string, { result: any[]; rollbackStop: number }>();
+const lastSceneByFile = new Map<string, { result: any[]; rollbackStop: number; sceneKind: FluidScriptKind }>();
 
-function emitSuccess(absPath: string, result: any[], rollbackStop: number, breakpointHit?: boolean) {
-  lastSceneByFile.set(absPath, { result, rollbackStop });
+function emitSuccess(absPath: string, sceneKind: FluidScriptKind, result: any[], rollbackStop: number, breakpointHit?: boolean) {
+  lastSceneByFile.set(absPath, { result, rollbackStop, sceneKind });
   sendToExtension({
     type: 'scene-rendered',
     absPath,
+    sceneKind,
     result,
     rollbackStop,
   });
@@ -185,6 +188,7 @@ function emitSuccess(absPath: string, result: any[], rollbackStop: number, break
     type: 'scene-rendered',
     result,
     absPath,
+    sceneKind,
     rollbackStop,
     breakpointHit,
   });
@@ -215,9 +219,11 @@ function emitCompileError(filePath: string, err: any) {
   const prev = lastSceneByFile.get(key);
   const result = prev?.result ?? [];
   const rollbackStop = prev?.rollbackStop ?? -1;
+  const sceneKind = prev?.sceneKind ?? detectKind(key) ?? 'part';
   sendToExtension({
     type: 'scene-rendered',
     absPath: key,
+    sceneKind,
     result,
     rollbackStop,
     compileError,
@@ -226,6 +232,7 @@ function emitCompileError(filePath: string, err: any) {
     type: 'scene-rendered',
     result,
     absPath: key,
+    sceneKind,
     rollbackStop,
     compileError,
   });
@@ -242,7 +249,7 @@ async function handleExtensionMessage(msg: any) {
           const data = await fluidCadServer.processFile(msg.filePath);
           if (myVersion !== renderVersion) { return; }
           if (data) {
-            emitSuccess(data.absPath, data.result, data.rollbackStop, data.breakpointHit);
+            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit);
           }
         } catch (err) {
           if (myVersion !== renderVersion) { return; }
@@ -261,7 +268,7 @@ async function handleExtensionMessage(msg: any) {
           const data = await fluidCadServer.updateLiveCode(msg.fileName, msg.code);
           if (myVersion !== renderVersion) { return; }
           if (data) {
-            emitSuccess(data.absPath, data.result, data.rollbackStop, data.breakpointHit);
+            emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop, data.breakpointHit);
           }
         } catch (err) {
           if (myVersion !== renderVersion) { return; }
@@ -275,7 +282,7 @@ async function handleExtensionMessage(msg: any) {
         const data = await fluidCadServer.rollback(msg.fileName, msg.index);
         if (myVersion !== renderVersion) { return; }
         if (data) {
-          emitSuccess(data.absPath, data.result, data.rollbackStop);
+          emitSuccess(data.absPath, data.sceneKind, data.result, data.rollbackStop);
         }
         break;
       }

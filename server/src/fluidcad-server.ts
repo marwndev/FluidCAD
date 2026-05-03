@@ -2,10 +2,13 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { ViteManager } from './vite-manager.ts';
 import { normalizePath } from './normalize-path.ts';
+import { detectKind } from './file-kind.ts';
+import type { FluidScriptKind } from './file-kind.ts';
 import { BreakpointHit } from '../../lib/dist/common/breakpoint-hit.js';
 
 type SceneManager = {
   startScene(): any;
+  startAssemblyScene(): any;
   renderScene(scene: any): any;
   rollbackScene(scene: any, rollbackIndex: number): any;
   compare(previousScene: any, currentScene: any): any;
@@ -36,6 +39,7 @@ type SceneManager = {
 
 export type SceneRenderedData = {
   absPath: string;
+  sceneKind: FluidScriptKind;
   result: any[];
   rollbackStop: number;
   breakpointHit?: boolean;
@@ -69,11 +73,14 @@ export class FluidCadServer {
     this.currentFileName = normalizedFileName;
     this.currentFilePath = filePath;
 
+    const sceneKind: FluidScriptKind = detectKind(normalizedFileName) ?? 'part';
+
     if (!ignoreCache) {
       const fromCache = this.renderingCache.get(normalizedFileName);
       if (fromCache) {
         return {
           absPath: normalizedFileName,
+          sceneKind,
           result: fromCache,
           rollbackStop: fromCache.length - 1,
         };
@@ -81,7 +88,9 @@ export class FluidCadServer {
     }
 
     try {
-      let scene = this.sceneManager.startScene();
+      let scene = sceneKind === 'assembly'
+        ? this.sceneManager.startAssemblyScene()
+        : this.sceneManager.startScene();
       this.sceneManager.setCurrentFile(normalizedFileName);
       this.viteManager.invalidateModule();
       let breakpointHit = false;
@@ -118,6 +127,7 @@ export class FluidCadServer {
 
       return {
         absPath: normalizedFileName,
+        sceneKind,
         result,
         rollbackStop: result.length - 1,
         breakpointHit,
@@ -169,6 +179,7 @@ export class FluidCadServer {
 
     return {
       absPath: fileName,
+      sceneKind: detectKind(fileName) ?? 'part',
       result,
       rollbackStop: index,
     };

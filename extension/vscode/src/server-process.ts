@@ -3,6 +3,7 @@ import { join } from 'path';
 import { fork } from 'child_process';
 import type { Client } from './client';
 import { createWebviewPanel } from './webview';
+import { isFluidScriptFile } from './file-kind';
 
 export function sendToServer(client: Client, msg: any) {
   if (client.serverProcess?.connected) {
@@ -35,7 +36,7 @@ export function updateLiveCode(client: Client, fileName: string, newCode: string
 export function initLiveRender(client: Client) {
   const disposable = vscode.workspace.onDidChangeTextDocument((event) => {
     const doc = event.document;
-    if (!doc.fileName.endsWith('.fluid.js')) {
+    if (!isFluidScriptFile(doc.fileName)) {
       return;
     }
 

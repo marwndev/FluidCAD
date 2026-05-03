@@ -1,4 +1,5 @@
 import { Scene } from "./rendering/scene.js";
+import { AssemblyScene } from "./rendering/assembly-scene.js";
 import { SceneRenderer } from "./rendering/render.js";
 import { SceneCompare } from "./rendering/scene-compare.js";
 import { FileImport } from "./io/file-import.js";
@@ -31,6 +32,13 @@ class SceneManager {
     this.currentScene = new Scene();
     console.log("Starting new scene");
     return this.currentScene;
+  }
+
+  startAssemblyScene(): AssemblyScene {
+    const scene = new AssemblyScene();
+    this.currentScene = scene;
+    console.log("Starting new assembly scene");
+    return scene;
   }
 
   renderScene(scene: Scene) {

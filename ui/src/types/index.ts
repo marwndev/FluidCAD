@@ -12,6 +12,13 @@ export type PlaneData = {
   yDirection: Vec3Data;
 };
 
+export type ConnectorData = {
+  origin: Vec3Data;
+  xDirection: Vec3Data;
+  yDirection: Vec3Data;
+  normal: Vec3Data;
+};
+
 // ---------------------------------------------------------------------------
 // Object types — every FluidCAD feature / construction element the backend emits
 // ---------------------------------------------------------------------------
@@ -47,7 +54,9 @@ export type ObjectType =
   // Direct solid reference
   | 'solid'
   // Part containers
-  | 'part';
+  | 'part'
+  // Assembly mate connectors
+  | 'connector';
 
 // ---------------------------------------------------------------------------
 // Shape types — the geometric representation of a scene object

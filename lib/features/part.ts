@@ -1,4 +1,5 @@
 import { BuildSceneObjectContext, SceneObject } from "../common/scene-object.js";
+import { Connector } from "./connector.js";
 
 export class Part extends SceneObject {
   constructor(public partName: string) {
@@ -33,6 +34,10 @@ export class Part extends SceneObject {
 
   getType(): string {
     return "part";
+  }
+
+  getConnectors(): Connector[] {
+    return this.getChildren().filter(c => c instanceof Connector) as Connector[];
   }
 
   serialize() {
