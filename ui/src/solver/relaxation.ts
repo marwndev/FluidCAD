@@ -64,8 +64,8 @@ export function runLM(
   normalize: ((x: Float64Array) => void) | null,
   options: LMOptions = {},
 ): LMResult {
-  const maxIters = options.maxIters ?? 50;
-  const tol = options.tol ?? 1e-7;
+  const maxIters = options.maxIters ?? 80;
+  const tol = options.tol ?? 1e-9;
   const initLambda = options.initLambda ?? 1e-3;
   const hRel = options.fdStep ?? 1e-6;
 

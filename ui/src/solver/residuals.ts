@@ -23,6 +23,18 @@ export type MateOptions = {
   offset?: [number, number, number];
 };
 
+// Length-scale factor that makes orientation residuals cost-comparable
+// to position residuals. Position residuals are in mm; orientation
+// residuals are dimensionless (`sin(θ)` for axis projections, axis-angle
+// magnitudes for full 3D). Without scaling, a 1° tilt costs ~3e-4 while
+// a 1 mm position error costs 1 — so LM tolerates visibly-tilted
+// solutions to gain tiny position improvements. Multiplying by a
+// length scale (~ typical link size in mm) makes a 1° tilt cost
+// `(0.017 × 60)² ≈ 1`, comparable to a 1 mm error, so LM keeps
+// orientations tight. The number is a heuristic; the exact value
+// matters less than its order of magnitude.
+const ORIENTATION_WEIGHT = 60;
+
 /**
  * Revolute residual (5 components):
  *   [0..2] position: follower-connector world origin minus driver-connector
@@ -68,9 +80,11 @@ export function residualRevolute(
   const dx = fOriginWorld.x - target.x;
   const dy = fOriginWorld.y - target.y;
   const dz = fOriginWorld.z - target.z;
-  // Axis parallelism: 2 perpendicular components of fZ in driver basis.
-  const ax = fZWorld.dot(dXWorld);
-  const ay = fZWorld.dot(dYWorld);
+  // Axis parallelism: 2 perpendicular components of fZ in driver basis,
+  // scaled to be cost-comparable to position residuals (otherwise LM
+  // tolerates visible tilts to chase tiny position improvements).
+  const ax = fZWorld.dot(dXWorld) * ORIENTATION_WEIGHT;
+  const ay = fZWorld.dot(dYWorld) * ORIENTATION_WEIGHT;
   return [dx, dy, dz, ax, ay];
 }
 
@@ -101,7 +115,12 @@ export function residualFastened(
   const ang = quatLog2(
     target.quaternion.clone().invert().multiply(follower.quaternion),
   );
-  return [dpx, dpy, dpz, ang.x, ang.y, ang.z];
+  return [
+    dpx, dpy, dpz,
+    ang.x * ORIENTATION_WEIGHT,
+    ang.y * ORIENTATION_WEIGHT,
+    ang.z * ORIENTATION_WEIGHT,
+  ];
 }
 
 /**
@@ -149,7 +168,12 @@ export function residualSlider(
   const ang = quatLog2(
     target.quaternion.clone().invert().multiply(follower.quaternion),
   );
-  return [px, py, ang.x, ang.y, ang.z];
+  return [
+    px, py,
+    ang.x * ORIENTATION_WEIGHT,
+    ang.y * ORIENTATION_WEIGHT,
+    ang.z * ORIENTATION_WEIGHT,
+  ];
 }
 
 /**
@@ -187,8 +211,8 @@ export function residualCylindrical(
   return [
     diff.dot(dXWorld),
     diff.dot(dYWorld),
-    fZWorld.dot(dXWorld),
-    fZWorld.dot(dYWorld),
+    fZWorld.dot(dXWorld) * ORIENTATION_WEIGHT,
+    fZWorld.dot(dYWorld) * ORIENTATION_WEIGHT,
   ];
 }
 
@@ -228,8 +252,8 @@ export function residualPlanar(
 
   return [
     diff.dot(dZWorld),
-    fZWorld.dot(dXWorld),
-    fZWorld.dot(dYWorld),
+    fZWorld.dot(dXWorld) * ORIENTATION_WEIGHT,
+    fZWorld.dot(dYWorld) * ORIENTATION_WEIGHT,
   ];
 }
 
