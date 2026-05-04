@@ -430,4 +430,134 @@ describe('mate(revolute) — phase 07', () => {
       .applyQuaternion(i3Drag.quaternion).add(i3Drag.position);
     expect(grabAfter.distanceTo(cursor)).toBeLessThan(1e-3);
   });
+
+  it('chained revolutes sharing a body don\'t override each other on load', async () => {
+    // Reproduces the example1.assembly.js bug:
+    //   bottom grounded
+    //   mate1 revolute(bottom.h1, left.h1)
+    //   mate2 revolute(top.h1, left.h2)
+    // Pre-fix: mate2's warm-start treated `left` as a free follower and
+    //   reseeded its pose from `top`, breaking mate1 (the bottom-left
+    //   connection visibly disconnected on load). With "priorlyLockedIds"
+    //   threading, mate1 locks `left` first; mate2 sees `left` as fixed
+    //   and instead computes `top` from it.
+    const h1: ConnectorState = {
+      connectorId: 'h1',
+      localOrigin: new Vector3(0, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const h2: ConnectorState = {
+      connectorId: 'h2',
+      localOrigin: new Vector3(40, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const solver = new Solver();
+    await solver.ensureReady();
+    const out = solver.solve({
+      bodies: [
+        // Source-order: bottom, top, left.
+        body('bottom', true, new Vector3(0, 0, 0), [h1, h2]),
+        body('top', false, new Vector3(0, 50, 0), [h1, h2]),
+        body('left', false, new Vector3(0, 100, 0), [h1, h2]),
+      ],
+      mates: [
+        revolute({ i: 'bottom', c: 'h1' }, { i: 'left', c: 'h1' }),
+        revolute({ i: 'top', c: 'h1' }, { i: 'left', c: 'h2' }),
+      ],
+    });
+    expect(out.result).toBe('okay');
+    const bottomOut = out.bodies.find(b => b.instanceId === 'bottom')!;
+    const topOut = out.bodies.find(b => b.instanceId === 'top')!;
+    const leftOut = out.bodies.find(b => b.instanceId === 'left')!;
+    // mate1: bottom.h1 ↔ left.h1 must coincide.
+    const bottomH1 = h1.localOrigin.clone()
+      .applyQuaternion(bottomOut.quaternion).add(bottomOut.position);
+    const leftH1 = h1.localOrigin.clone()
+      .applyQuaternion(leftOut.quaternion).add(leftOut.position);
+    expect(leftH1.distanceTo(bottomH1)).toBeLessThan(1e-4);
+    // mate2: top.h1 ↔ left.h2 must coincide.
+    const topH1 = h1.localOrigin.clone()
+      .applyQuaternion(topOut.quaternion).add(topOut.position);
+    const leftH2 = h2.localOrigin.clone()
+      .applyQuaternion(leftOut.quaternion).add(leftOut.position);
+    expect(topH1.distanceTo(leftH2)).toBeLessThan(1e-4);
+  });
+
+  it('chained revolutes preserve mate1 when dragging the tip body', async () => {
+    // Same chain as above, but now drag `top` (the tip). Pre-fix, mate2
+    // would re-pose `left` to follow `top`, breaking mate1 (bottom-left
+    // visibly disconnects). With the lock-respect fix, mate1 stays
+    // satisfied: `left` is locked at bottom-h1 first, then mate2 makes
+    // `top` follow `left` (top can rotate around left.h2 with 1 DOF).
+    const h1: ConnectorState = {
+      connectorId: 'h1',
+      localOrigin: new Vector3(0, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const h2: ConnectorState = {
+      connectorId: 'h2',
+      localOrigin: new Vector3(40, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const solver = new Solver();
+    await solver.ensureReady();
+    // First settle the assembly with no drag.
+    const settle = solver.solve({
+      bodies: [
+        body('bottom', true, new Vector3(0, 0, 0), [h1, h2]),
+        body('top', false, new Vector3(0, 50, 0), [h1, h2]),
+        body('left', false, new Vector3(0, 100, 0), [h1, h2]),
+      ],
+      mates: [
+        revolute({ i: 'bottom', c: 'h1' }, { i: 'left', c: 'h1' }),
+        revolute({ i: 'top', c: 'h1' }, { i: 'left', c: 'h2' }),
+      ],
+    });
+    expect(settle.result).toBe('okay');
+    // Now drag `top` to a new cursor target. mate1 (bottom↔left) must
+    // remain satisfied; the chain should not break apart.
+    const settledBodies: BodyState[] = settle.bodies.map(b => ({
+      instanceId: b.instanceId,
+      position: b.position.clone(),
+      quaternion: b.quaternion.clone(),
+      grounded: b.instanceId === 'bottom',
+      connectors: [h1, h2],
+    }));
+    const topSettled = settle.bodies.find(b => b.instanceId === 'top')!;
+    const grabLocalOnTop = new Vector3(0, 0, 0);
+    const grabBefore = grabLocalOnTop.clone()
+      .applyQuaternion(topSettled.quaternion).add(topSettled.position);
+    const cursor = grabBefore.clone().add(new Vector3(30, 30, 0));
+    const out = solver.solve({
+      bodies: settledBodies,
+      mates: [
+        revolute({ i: 'bottom', c: 'h1' }, { i: 'left', c: 'h1' }),
+        revolute({ i: 'top', c: 'h1' }, { i: 'left', c: 'h2' }),
+      ],
+      draggedInstanceId: 'top',
+      draggedTargetOrigin: cursor.clone(),
+      draggedCursorWorld: cursor.clone(),
+      draggedGrabLocal: grabLocalOnTop.clone(),
+    });
+    expect(out.result).toBe('okay');
+    const bottomOut = out.bodies.find(b => b.instanceId === 'bottom')!;
+    const leftOut = out.bodies.find(b => b.instanceId === 'left')!;
+    const topOut = out.bodies.find(b => b.instanceId === 'top')!;
+    // mate1 must still be satisfied — this is the regression.
+    const bottomH1 = h1.localOrigin.clone()
+      .applyQuaternion(bottomOut.quaternion).add(bottomOut.position);
+    const leftH1 = h1.localOrigin.clone()
+      .applyQuaternion(leftOut.quaternion).add(leftOut.position);
+    expect(leftH1.distanceTo(bottomH1)).toBeLessThan(1e-4);
+    // mate2 also satisfied.
+    const topH1 = h1.localOrigin.clone()
+      .applyQuaternion(topOut.quaternion).add(topOut.position);
+    const leftH2 = h2.localOrigin.clone()
+      .applyQuaternion(leftOut.quaternion).add(leftOut.position);
+    expect(topH1.distanceTo(leftH2)).toBeLessThan(1e-4);
+  });
 });

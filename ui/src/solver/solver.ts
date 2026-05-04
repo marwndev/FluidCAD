@@ -20,6 +20,7 @@ import {
   applyRevoluteWarmStarts,
   applySliderFixup,
   applySliderWarmStarts,
+  type RoleDecisions,
 } from './warm-start.js';
 
 export class Solver {
@@ -45,11 +46,25 @@ export class Solver {
     if (!this.api) {
       throw new Error('Solver.solve() called before ensureReady() resolved.');
     }
+    // Tracks which bodies have been locked by a *prior* mate's warm-start
+    // in this solve pass. Threaded through every warm-start so that when
+    // mate N's role-picker sees a body fixed by mate K (K < N), the body
+    // is treated as a driver and mate N follows it. Without this, mate N
+    // would clobber the pose mate K chose, silently breaking mate K.
+    const priorlyLockedIds = new Set<string>();
+    // Records each mate's role pick (which body is the driver) so the
+    // fixup phase can replay the *same* decisions. Re-running pickRoles
+    // in fixup without this would diverge — fixup mustn't see warm-start's
+    // chained-lock state — so the two phases would disagree on driver
+    // and follower for the same mate, propagating relations backwards.
+    const decisions: RoleDecisions = new Map();
     // Slvs has no primitive for "Q_B = Q_A · R_fixed" (the relation a
     // fastened mate needs when connectors have non-trivial local frames or
     // a face-to-face flip). Pre-compute follower pose in JS, freeze its
     // quat params, and let slvs handle position propagation only.
-    applyFastenedWarmStarts(input.bodies, input.mates, input.draggedInstanceId);
+    applyFastenedWarmStarts(
+      input.bodies, input.mates, input.draggedInstanceId, priorlyLockedIds, decisions,
+    );
     // Revolute is also handled JS-side (the slvs encoding can't represent
     // off-xy-plane connectors faithfully). The warm-start fully determines
     // the follower's pose — including converting drag-of-follower into a
@@ -60,7 +75,7 @@ export class Solver {
       draggedInstanceId: input.draggedInstanceId,
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
-    });
+    }, priorlyLockedIds, decisions);
     // Slider runs after revolute so chains like A grounded → revolute → B →
     // slider → C resolve correctly: revolute locks B first (grounded → B),
     // then slider sees B as locked (driver) and computes C from it. The
@@ -70,7 +85,7 @@ export class Solver {
       draggedInstanceId: input.draggedInstanceId,
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
-    });
+    }, priorlyLockedIds, decisions);
     // Cylindrical: like slider but with rotation about Z left free as
     // well. Drag decomposes into (axial slide, in-plane angle); both
     // are preserved across solves. The 2 free DOFs are added back to
@@ -79,7 +94,7 @@ export class Solver {
       draggedInstanceId: input.draggedInstanceId,
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
-    });
+    }, priorlyLockedIds, decisions);
     // Planar: 3 DOF (in-plane translation + rotation about Z). The
     // .offset(0,0,d) Z gap stays fixed; (xLocal, yLocal, angle) are
     // preserved across solves. Drag decomposes the cursor projection
@@ -88,7 +103,7 @@ export class Solver {
       draggedInstanceId: input.draggedInstanceId,
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
-    });
+    }, priorlyLockedIds, decisions);
     const built = buildSystem(this.api, input);
 
     if (input.draggedInstanceId && input.draggedTargetOrigin) {
@@ -113,12 +128,14 @@ export class Solver {
     // Revolute fixup runs first so a chain like A → revolute → B →
     // fastened → C propagates A's solved pose all the way to C: B's
     // pose is updated here, then the fastened fixup picks up the
-    // updated B as driver.
-    applyRevoluteFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    applySliderFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    applyCylindricalFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    applyPlanarFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
-    applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId);
+    // updated B as driver. Fixups pass `decisions` so they replay
+    // warm-start's role picks instead of recomputing (which would
+    // diverge for chained mates — see `pickRoles`).
+    applyRevoluteFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId, decisions);
+    applySliderFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId, decisions);
+    applyCylindricalFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId, decisions);
+    applyPlanarFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId, decisions);
+    applyFastenedFixup(input.bodies, out.bodies, input.mates, input.draggedInstanceId, decisions);
     // Each non-both-grounded revolute / slider / cylindrical / planar
     // mate contributes free DOFs (1, 1, 2, 3 respectively) that slvs
     // can't see — the followers are JS-side locked. Add them in so

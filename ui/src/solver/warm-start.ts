@@ -74,6 +74,8 @@ export function applyRevoluteWarmStarts(
   bodies: BodyState[],
   mates: MateRecord[],
   drag: RevoluteDragInfo = {},
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): void {
   const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
   const byId = new Map(bodies.map(b => [b.instanceId, b]));
@@ -86,7 +88,10 @@ export function applyRevoluteWarmStarts(
     const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
+      priorlyLockedIds, decisions,
+    );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
     const options = mate.options ?? {};
@@ -139,6 +144,7 @@ export function applyRevoluteWarmStarts(
     // added to the reported DOF count by Solver.solve().
     follower.lockPosition = true;
     follower.lockOrientation = true;
+    priorlyLockedIds?.add(follower.instanceId);
   }
 }
 
@@ -158,6 +164,7 @@ export function applyRevoluteFixup(
   out: SolvedBody[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  decisions?: RoleDecisions,
 ): void {
   const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
   const outById = new Map(out.map(b => [b.instanceId, b]));
@@ -170,7 +177,10 @@ export function applyRevoluteFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates,
+      undefined, decisions,
+    );
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -371,6 +381,8 @@ export function applySliderWarmStarts(
   bodies: BodyState[],
   mates: MateRecord[],
   drag: SliderDragInfo = {},
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): void {
   const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
   const byId = new Map(bodies.map(b => [b.instanceId, b]));
@@ -383,7 +395,10 @@ export function applySliderWarmStarts(
     const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
+      priorlyLockedIds, decisions,
+    );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
     const options = mate.options ?? {};
@@ -432,6 +447,7 @@ export function applySliderWarmStarts(
     follower.quaternion = target.quaternion;
     follower.lockPosition = true;
     follower.lockOrientation = true;
+    priorlyLockedIds?.add(follower.instanceId);
   }
 }
 
@@ -447,6 +463,7 @@ export function applySliderFixup(
   out: SolvedBody[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  decisions?: RoleDecisions,
 ): void {
   const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
   const outById = new Map(out.map(b => [b.instanceId, b]));
@@ -459,7 +476,10 @@ export function applySliderFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates,
+      undefined, decisions,
+    );
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -540,6 +560,8 @@ export function applyCylindricalWarmStarts(
   bodies: BodyState[],
   mates: MateRecord[],
   drag: CylindricalDragInfo = {},
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): void {
   const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
   const byId = new Map(bodies.map(b => [b.instanceId, b]));
@@ -552,7 +574,10 @@ export function applyCylindricalWarmStarts(
     const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
+      priorlyLockedIds, decisions,
+    );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
     const options = mate.options ?? {};
@@ -631,6 +656,7 @@ export function applyCylindricalWarmStarts(
     follower.quaternion = target.quaternion;
     follower.lockPosition = true;
     follower.lockOrientation = true;
+    priorlyLockedIds?.add(follower.instanceId);
   }
 }
 
@@ -646,6 +672,7 @@ export function applyCylindricalFixup(
   out: SolvedBody[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  decisions?: RoleDecisions,
 ): void {
   const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
   const outById = new Map(out.map(b => [b.instanceId, b]));
@@ -658,7 +685,10 @@ export function applyCylindricalFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates,
+      undefined, decisions,
+    );
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -849,6 +879,8 @@ export function applyPlanarWarmStarts(
   bodies: BodyState[],
   mates: MateRecord[],
   drag: PlanarDragInfo = {},
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): void {
   const { draggedInstanceId, draggedCursorWorld, draggedGrabLocal } = drag;
   const byId = new Map(bodies.map(b => [b.instanceId, b]));
@@ -861,7 +893,10 @@ export function applyPlanarWarmStarts(
     const bConn = bBody.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
+      priorlyLockedIds, decisions,
+    );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
     const options = mate.options ?? {};
@@ -925,6 +960,7 @@ export function applyPlanarWarmStarts(
     follower.quaternion = target.quaternion;
     follower.lockPosition = true;
     follower.lockOrientation = true;
+    priorlyLockedIds?.add(follower.instanceId);
   }
 }
 
@@ -939,6 +975,7 @@ export function applyPlanarFixup(
   out: SolvedBody[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  decisions?: RoleDecisions,
 ): void {
   const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
   const outById = new Map(out.map(b => [b.instanceId, b]));
@@ -951,7 +988,10 @@ export function applyPlanarFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates,
+      undefined, decisions,
+    );
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -1062,6 +1102,8 @@ export function applyFastenedWarmStarts(
   bodies: BodyState[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): void {
   const byId = new Map(bodies.map(b => [b.instanceId, b]));
   for (const mate of mates) {
@@ -1075,6 +1117,7 @@ export function applyFastenedWarmStarts(
 
     const roles = pickRoles(
       aBody, bBody, aConn, bConn, mate, draggedInstanceId, mates,
+      priorlyLockedIds, decisions,
     );
     if (!roles) continue;
     const { driver, follower, driverConn, followerConn } = roles;
@@ -1086,6 +1129,7 @@ export function applyFastenedWarmStarts(
     follower.quaternion = target.quaternion;
     follower.lockPosition = true;
     follower.lockOrientation = true;
+    priorlyLockedIds?.add(follower.instanceId);
   }
 }
 
@@ -1102,6 +1146,7 @@ export function applyFastenedFixup(
   out: SolvedBody[],
   mates: MateRecord[],
   draggedInstanceId?: string,
+  decisions?: RoleDecisions,
 ): void {
   const inputById = new Map(inputBodies.map(b => [b.instanceId, b]));
   const outById = new Map(out.map(b => [b.instanceId, b]));
@@ -1114,7 +1159,10 @@ export function applyFastenedFixup(
     const bConn = bInput.connectors.find(c => c.connectorId === mate.connectorB.connectorId);
     if (!aConn || !bConn) continue;
 
-    const roles = pickRoles(aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates);
+    const roles = pickRoles(
+      aInput, bInput, aConn, bConn, mate, draggedInstanceId, mates,
+      undefined, decisions,
+    );
     if (!roles) continue;
     const driverOut = outById.get(roles.driver.instanceId);
     const followerOut = outById.get(roles.follower.instanceId);
@@ -1143,6 +1191,17 @@ type Roles = {
   followerConn: ConnectorState;
 };
 
+/**
+ * Records the role pick (driver instance id, or `null` for "skip this
+ * mate") for each mate during the warm-start phase, so the fixup phase
+ * can replay the same decisions. Without this, fixups would re-pick from
+ * scratch — and because warm-start uses chained-lock awareness while
+ * fixup must not, the two phases would disagree on driver/follower for
+ * the same mate, propagating relations backwards and breaking earlier
+ * mates in a chain.
+ */
+export type RoleDecisions = Map<string, string | null>;
+
 function pickRoles(
   aBody: BodyState,
   bBody: BodyState,
@@ -1151,17 +1210,62 @@ function pickRoles(
   mate: MateRecord,
   draggedInstanceId?: string,
   allMates?: MateRecord[],
+  priorlyLockedIds?: Set<string>,
+  decisions?: RoleDecisions,
 ): Roles | null {
-  // Grounded bodies are immovable and must always be drivers. Two grounded
-  // bodies have nothing to warm-start (the mate is either pre-satisfied or
-  // permanently violated; the latter is detected separately).
-  if (aBody.grounded && bBody.grounded) {
+  // Replay path (fixup phase). If the warm-start already decided this
+  // mate's roles, honor that decision verbatim — fixup must propagate the
+  // exact same driver→follower relation, otherwise a chain mateK → mateN
+  // (sharing a body) would have one phase pick mateN's follower and the
+  // other phase pick its driver, breaking mateK.
+  if (decisions && decisions.has(mate.mateId)) {
+    const driverId = decisions.get(mate.mateId);
+    if (driverId === null) return null;
+    if (driverId === aBody.instanceId) {
+      return { driver: aBody, follower: bBody, driverConn: aConn, followerConn: bConn };
+    }
+    if (driverId === bBody.instanceId) {
+      return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
+    }
+    // Stale decision — the recorded driver no longer matches either body.
+    // Fall through to fresh logic so we don't return a corrupt role pair.
+  }
+
+  const result = computeRoles(
+    aBody, bBody, aConn, bConn, mate, draggedInstanceId, allMates,
+    priorlyLockedIds,
+  );
+  if (decisions) {
+    decisions.set(mate.mateId, result === null ? null : result.driver.instanceId);
+  }
+  return result;
+}
+
+function computeRoles(
+  aBody: BodyState,
+  bBody: BodyState,
+  aConn: ConnectorState,
+  bConn: ConnectorState,
+  mate: MateRecord,
+  draggedInstanceId?: string,
+  allMates?: MateRecord[],
+  priorlyLockedIds?: Set<string>,
+): Roles | null {
+  // A body that's grounded OR has been fully locked by an *earlier* mate's
+  // warm-start in this same solve pass is "fixed" — its pose is already
+  // determined and a later mate must follow it, not overwrite it. Without
+  // this check, two mates that share a body (e.g. a chain
+  // ground → mate1 → middle → mate2 → tip) would have mate2 silently
+  // clobber the pose mate1 chose for `middle`, breaking mate1.
+  const aFixed = isFixed(aBody, priorlyLockedIds);
+  const bFixed = isFixed(bBody, priorlyLockedIds);
+  if (aFixed && bFixed) {
     return null;
   }
-  if (aBody.grounded) {
+  if (aFixed) {
     return { driver: aBody, follower: bBody, driverConn: aConn, followerConn: bConn };
   }
-  if (bBody.grounded) {
+  if (bFixed) {
     return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
   }
 
@@ -1191,6 +1295,25 @@ function pickRoles(
     return { driver: bBody, follower: aBody, driverConn: bConn, followerConn: aConn };
   }
   return { driver: aBody, follower: bBody, driverConn: aConn, followerConn: bConn };
+}
+
+/**
+ * A body is "fixed" for warm-start role-picking if it's grounded or if a
+ * previous mate's warm-start (tracked in `priorlyLockedIds`) has already
+ * fixed its pose. Fixed bodies must drive subsequent mates so their pose
+ * isn't overwritten — the chain ground → mateN → tip propagates correctly
+ * only when each link in turn is treated as the driver of the next mate.
+ *
+ * Note: we deliberately do NOT consult `body.lockPosition` /
+ * `body.lockOrientation`. Those flags are set by warm-start as it
+ * processes each mate, so they're true for the *current* mate's follower
+ * at fixup time. Reading them in pickRoles would cause fixups to swap
+ * driver/follower roles and propagate the relation backwards.
+ */
+function isFixed(body: BodyState, priorlyLockedIds?: Set<string>): boolean {
+  if (body.grounded) return true;
+  if (priorlyLockedIds && priorlyLockedIds.has(body.instanceId)) return true;
+  return false;
 }
 
 /**
