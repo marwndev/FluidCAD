@@ -1,0 +1,207 @@
+import { describe, expect, it } from 'vitest';
+import { Quaternion, Vector3 } from 'three';
+import {
+  Solver,
+  type BodyState,
+  type ConnectorState,
+  type MateRecord,
+} from '../src/solver';
+
+// Connector with localOrigin at (ox, oy, 0), Z normal up, X along world X.
+function flatConnector(connectorId: string, ox = 0, oy = 0): ConnectorState {
+  return {
+    connectorId,
+    localOrigin: new Vector3(ox, oy, 0),
+    localXDirection: new Vector3(1, 0, 0),
+    localNormal: new Vector3(0, 0, 1),
+  };
+}
+
+function body(
+  instanceId: string,
+  grounded: boolean,
+  position: Vector3,
+  quaternion: Quaternion,
+  connectors: ConnectorState[],
+): BodyState {
+  return { instanceId, position, quaternion, grounded, connectors };
+}
+
+function revolute(
+  mateId: string,
+  a: { i: string; c: string },
+  b: { i: string; c: string },
+  options?: MateRecord['options'],
+): MateRecord {
+  return {
+    mateId,
+    type: 'revolute',
+    connectorA: { instanceId: a.i, connectorId: a.c },
+    connectorB: { instanceId: b.i, connectorId: b.c },
+    options,
+  };
+}
+
+// Quaternion for rotation about world Z by `degrees`.
+function quatZ(degrees: number): Quaternion {
+  const half = (degrees * Math.PI) / 360;
+  return new Quaternion(0, 0, Math.sin(half), Math.cos(half));
+}
+
+// World position of a body's connector origin.
+function connectorWorld(b: BodyState | { position: Vector3; quaternion: Quaternion }, conn: ConnectorState): Vector3 {
+  return conn.localOrigin.clone().applyQuaternion(b.quaternion).add(b.position);
+}
+
+describe('mate-loops — closed loops via LM relaxation', () => {
+  // Parallelogram 4-bar:
+  //   A (ground): h1 at local (0,0,0), h2 at local (100,0,0).
+  //   B (crank): h1 at local (0,0,0), h2 at local (30,0,0).
+  //   C (coupler): h1 at local (0,0,0), h2 at local (100,0,0).
+  //   D (rocker): h1 at local (0,0,0), h2 at local (30,0,0).
+  // Mates:
+  //   m1: A.h1 ↔ B.h1   (crank pivot on ground)
+  //   m2: B.h2 ↔ C.h1   (crank end to coupler start)
+  //   m3: C.h2 ↔ D.h1   (coupler end to rocker start)
+  //   m4: D.h2 ↔ A.h2   (rocker end to ground — CLOSURE)
+  //
+  // Canonical config: B and D both straight up by 90°, C at y=30.
+  //   A=(0,0,0) identity. B=(0,0,0) +90°Z. C=(0,30,0) identity. D=(100,30,0) -90°Z.
+
+  function buildParallelogram(): {
+    bodies: BodyState[];
+    mates: MateRecord[];
+    aH1: ConnectorState; aH2: ConnectorState;
+    bH1: ConnectorState; bH2: ConnectorState;
+    cH1: ConnectorState; cH2: ConnectorState;
+    dH1: ConnectorState; dH2: ConnectorState;
+  } {
+    const aH1 = flatConnector('h1', 0, 0);
+    const aH2 = flatConnector('h2', 100, 0);
+    const bH1 = flatConnector('h1', 0, 0);
+    const bH2 = flatConnector('h2', 30, 0);
+    const cH1 = flatConnector('h1', 0, 0);
+    const cH2 = flatConnector('h2', 100, 0);
+    const dH1 = flatConnector('h1', 0, 0);
+    const dH2 = flatConnector('h2', 30, 0);
+
+    const bodies = [
+      body('A', true,  new Vector3(0, 0, 0),    new Quaternion(),         [aH1, aH2]),
+      body('B', false, new Vector3(0, 0, 0),    quatZ(90),                [bH1, bH2]),
+      body('C', false, new Vector3(0, 30, 0),   new Quaternion(),         [cH1, cH2]),
+      body('D', false, new Vector3(100, 30, 0), quatZ(-90),               [dH1, dH2]),
+    ];
+    const mates: MateRecord[] = [
+      revolute('m1', { i: 'A', c: 'h1' }, { i: 'B', c: 'h1' }),
+      revolute('m2', { i: 'B', c: 'h2' }, { i: 'C', c: 'h1' }),
+      revolute('m3', { i: 'C', c: 'h2' }, { i: 'D', c: 'h1' }),
+      revolute('m4', { i: 'D', c: 'h2' }, { i: 'A', c: 'h2' }),
+    ];
+    return { bodies, mates, aH1, aH2, bH1, bH2, cH1, cH2, dH1, dH2 };
+  }
+
+  it('planar 4-bar at canonical config keeps closure satisfied', async () => {
+    // Pre-place bodies at the parallelogram config; verify the solver
+    // doesn't break the closure. Without the LM relaxation pass, the
+    // closure mate (m4) would be silently ignored — but the warm-start
+    // alone already satisfies all 4 mates here, so LM is a no-op. Real
+    // value: this proves no regression when a closure happens to be
+    // pre-satisfied.
+    const setup = buildParallelogram();
+    const solver = new Solver();
+    await solver.ensureReady();
+    const out = solver.solve({ bodies: setup.bodies, mates: setup.mates });
+    expect(out.result).toBe('okay');
+
+    const get = (id: string) => out.bodies.find(b => b.instanceId === id)!;
+    const A = get('A'), B = get('B'), C = get('C'), D = get('D');
+
+    // m1: A.h1 ↔ B.h1
+    expect(connectorWorld(B, setup.bH1).distanceTo(connectorWorld(A, setup.aH1))).toBeLessThan(1e-4);
+    // m2: B.h2 ↔ C.h1
+    expect(connectorWorld(C, setup.cH1).distanceTo(connectorWorld(B, setup.bH2))).toBeLessThan(1e-4);
+    // m3: C.h2 ↔ D.h1
+    expect(connectorWorld(D, setup.dH1).distanceTo(connectorWorld(C, setup.cH2))).toBeLessThan(1e-4);
+    // m4: D.h2 ↔ A.h2 — the closure. THIS is the regression target.
+    expect(connectorWorld(A, setup.aH2).distanceTo(connectorWorld(D, setup.dH2))).toBeLessThan(1e-4);
+  });
+
+  it('planar 4-bar from a non-canonical seed converges to a closed config', async () => {
+    // Same parallelogram, but perturb the coupler and rocker poses by a
+    // few millimeters. The warm-start re-seeds tree-edge followers from
+    // their drivers (so B → C → D end up daisy-chained from A's h1
+    // along x, well off the parallelogram), and LM has to bend the
+    // chain back so the closure m4 is satisfied. We accept any LM-valid
+    // configuration that closes all four mates.
+    const setup = buildParallelogram();
+    // Perturb C and D to non-trivial poses so the warm-start must
+    // re-seed them (the existing parallelogram config lets warm-start
+    // skip re-seeding; we want LM exercise here).
+    setup.bodies[2].position.set(50, 30, 0);
+    setup.bodies[3].position.set(60, 0, 0);
+    setup.bodies[3].quaternion.set(0, 0, 0, 1); // identity → not on parallelogram
+
+    const solver = new Solver();
+    await solver.ensureReady();
+    const out = solver.solve({ bodies: setup.bodies, mates: setup.mates });
+    expect(out.result).toBe('okay');
+
+    const get = (id: string) => out.bodies.find(b => b.instanceId === id)!;
+    const A = get('A'), B = get('B'), C = get('C'), D = get('D');
+
+    // All four closures within LM tolerance.
+    expect(connectorWorld(B, setup.bH1).distanceTo(connectorWorld(A, setup.aH1))).toBeLessThan(1e-3);
+    expect(connectorWorld(C, setup.cH1).distanceTo(connectorWorld(B, setup.bH2))).toBeLessThan(1e-3);
+    expect(connectorWorld(D, setup.dH1).distanceTo(connectorWorld(C, setup.cH2))).toBeLessThan(1e-3);
+    expect(connectorWorld(A, setup.aH2).distanceTo(connectorWorld(D, setup.dH2))).toBeLessThan(1e-3);
+  });
+
+  it('planar 4-bar drag a coupler joint preserves closure', async () => {
+    // Settle the parallelogram, then drag B's tip (which carries C
+    // along) by a small cursor delta. After the drag-solve, all four
+    // mates must still be satisfied.
+    const setup = buildParallelogram();
+    const solver = new Solver();
+    await solver.ensureReady();
+    const settle = solver.solve({ bodies: setup.bodies, mates: setup.mates });
+    expect(settle.result).toBe('okay');
+
+    // Dragged body: C (the coupler), grabbing its center.
+    // C.center traces a 30mm-radius circle around world (50,0,0) as B
+    // sweeps. We drag tangent to that circle (cursor in +x with no y
+    // shift) so the target stays reachable; perpendicular drags would
+    // hit the linkage's range-of-motion boundary, which stage 4 covers
+    // explicitly with a closure-priority weighting.
+    const cSettled = settle.bodies.find(b => b.instanceId === 'C')!;
+    const grabLocalOnC = new Vector3(50, 0, 0); // halfway along the coupler
+    const grabBefore = grabLocalOnC.clone()
+      .applyQuaternion(cSettled.quaternion).add(cSettled.position);
+    const cursor = grabBefore.clone().add(new Vector3(2, 0, 0));
+
+    const draggedBodies: BodyState[] = settle.bodies.map(b => ({
+      instanceId: b.instanceId,
+      position: b.position.clone(),
+      quaternion: b.quaternion.clone(),
+      grounded: b.instanceId === 'A',
+      connectors: setup.bodies.find(orig => orig.instanceId === b.instanceId)!.connectors,
+    }));
+
+    const out = solver.solve({
+      bodies: draggedBodies,
+      mates: setup.mates,
+      draggedInstanceId: 'C',
+      draggedCursorWorld: cursor,
+      draggedGrabLocal: grabLocalOnC,
+    });
+    expect(out.result).toBe('okay');
+
+    const get = (id: string) => out.bodies.find(b => b.instanceId === id)!;
+    const A = get('A'), B = get('B'), C = get('C'), D = get('D');
+
+    // All four closures within LM tolerance after the drag.
+    expect(connectorWorld(B, setup.bH1).distanceTo(connectorWorld(A, setup.aH1))).toBeLessThan(1e-3);
+    expect(connectorWorld(C, setup.cH1).distanceTo(connectorWorld(B, setup.bH2))).toBeLessThan(1e-3);
+    expect(connectorWorld(D, setup.dH1).distanceTo(connectorWorld(C, setup.cH2))).toBeLessThan(1e-3);
+    expect(connectorWorld(A, setup.aH2).distanceTo(connectorWorld(D, setup.dH2))).toBeLessThan(1e-3);
+  });
+});

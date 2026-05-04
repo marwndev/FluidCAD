@@ -15,6 +15,7 @@
 
 import { GROUP_ACTIVE, buildSystem, readBackPoses, type BodyHandles, type BuiltSystem } from './system-builder.js';
 import { buildMateGraph } from './graph.js';
+import { applyLoopRelaxations } from './loop-relaxation.js';
 import { loadSolveSpace, type SolveSpaceApi } from './solvespace-loader.js';
 import type { SolverInput, SolverOutput, SolverResult } from './types.js';
 import {
@@ -56,6 +57,16 @@ export class Solver {
     const graph = buildMateGraph(input.bodies, input.mates, input.draggedInstanceId);
 
     applyTreeWarmStarts(input.bodies, graph.components, input.mates, {
+      draggedInstanceId: input.draggedInstanceId,
+      draggedCursorWorld: input.draggedCursorWorld,
+      draggedGrabLocal: input.draggedGrabLocal,
+    });
+
+    // Loop relaxation: per-component LM pass that brings loop bodies
+    // onto the closure manifold. Stage 2 handles revolute-only loops;
+    // mixed-mate loops fall through (the orchestrator's gating skips
+    // any component with a mate type that has no residual yet).
+    applyLoopRelaxations(input.bodies, graph.components, {
       draggedInstanceId: input.draggedInstanceId,
       draggedCursorWorld: input.draggedCursorWorld,
       draggedGrabLocal: input.draggedGrabLocal,
