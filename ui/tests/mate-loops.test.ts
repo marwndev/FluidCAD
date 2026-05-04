@@ -217,6 +217,109 @@ describe('mate-loops — closed loops via LM relaxation', () => {
     expect(perp).toBeLessThan(1e-4);
   });
 
+  it('drag through revolute chain rotates upstream link', async () => {
+    // 3-body chain (no closure):
+    //   A (grounded) — revolute — B — revolute — C
+    // Each link has connectors h1 at local origin and h2 at local (50, 0, 0).
+    // Drag C's far tip; B *and* C must rotate so the grab tracks the
+    // cursor. Pre-stage-4 the cluster lookup was fastened-only, so
+    // dragging C only rotated C around B.h2 — B stayed put. Stage 4's
+    // chain-aware drag (LM treats both B and C as variables, drag is a
+    // soft residual) propagates the cursor target through the whole
+    // chain.
+    const aH1: ConnectorState = {
+      connectorId: 'h1',
+      localOrigin: new Vector3(0, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const aH2: ConnectorState = {
+      connectorId: 'h2',
+      localOrigin: new Vector3(50, 0, 0),
+      localXDirection: new Vector3(1, 0, 0),
+      localNormal: new Vector3(0, 0, 1),
+    };
+    const bH1 = { ...aH1 };
+    const bH2 = { ...aH2 };
+    const cH1 = { ...aH1 };
+    const cH2 = { ...aH2 };
+
+    const solver = new Solver();
+    await solver.ensureReady();
+
+    // Settle the chain at the canonical face-to-face seed (B and C
+    // stretched along world +x from A).
+    const settle = solver.solve({
+      bodies: [
+        body('A', true,  new Vector3(0, 0, 0), new Quaternion(),         [aH1, aH2]),
+        body('B', false, new Vector3(0, 0, 0), new Quaternion(),         [bH1, bH2]),
+        body('C', false, new Vector3(50, 0, 0), new Quaternion(),        [cH1, cH2]),
+      ],
+      mates: [
+        revolute('m1', { i: 'A', c: 'h1' }, { i: 'B', c: 'h1' }),
+        revolute('m2', { i: 'B', c: 'h2' }, { i: 'C', c: 'h1' }),
+      ],
+    });
+    expect(settle.result).toBe('okay');
+
+    // Now drag C's far tip (its h2 connector origin) to a target that
+    // sits diagonally — reachable but only if BOTH B and C rotate. The
+    // chain has total length 100 (50 + 50); cursor at distance ~85 is
+    // well inside the reachable annulus.
+    const cSettled = settle.bodies.find(b => b.instanceId === 'C')!;
+    const grabLocalOnC = new Vector3(50, 0, 0);
+    const cursor = new Vector3(60, 60, 0);
+
+    const draggedBodies: BodyState[] = settle.bodies.map(b => ({
+      instanceId: b.instanceId,
+      position: b.position.clone(),
+      quaternion: b.quaternion.clone(),
+      grounded: b.instanceId === 'A',
+      connectors: b.instanceId === 'A'
+        ? [aH1, aH2]
+        : b.instanceId === 'B'
+          ? [bH1, bH2]
+          : [cH1, cH2],
+    }));
+    void cSettled;
+
+    const out = solver.solve({
+      bodies: draggedBodies,
+      mates: [
+        revolute('m1', { i: 'A', c: 'h1' }, { i: 'B', c: 'h1' }),
+        revolute('m2', { i: 'B', c: 'h2' }, { i: 'C', c: 'h1' }),
+      ],
+      draggedInstanceId: 'C',
+      draggedCursorWorld: cursor,
+      draggedGrabLocal: grabLocalOnC,
+    });
+    expect(out.result).toBe('okay');
+
+    const A = out.bodies.find(b => b.instanceId === 'A')!;
+    const B = out.bodies.find(b => b.instanceId === 'B')!;
+    const C = out.bodies.find(b => b.instanceId === 'C')!;
+
+    // Mate constraints stay satisfied.
+    expect(connectorWorld(B, bH1).distanceTo(connectorWorld(A, aH1))).toBeLessThan(1e-3);
+    expect(connectorWorld(C, cH1).distanceTo(connectorWorld(B, bH2))).toBeLessThan(1e-3);
+
+    // The grab on C lands at the cursor (within LM tolerance).
+    const grabWorld = grabLocalOnC.clone()
+      .applyQuaternion(C.quaternion).add(C.position);
+    expect(grabWorld.distanceTo(cursor)).toBeLessThan(1e-2);
+
+    // Critically: B rotated. Pre-fix it stayed identity (face-to-face
+    // along world +x); a meaningful rotation here proves chain-aware
+    // drag is propagating through the upstream revolute.
+    const bAxisAngle = 2 * Math.atan2(
+      Math.sqrt(B.quaternion.x * B.quaternion.x
+        + B.quaternion.y * B.quaternion.y
+        + B.quaternion.z * B.quaternion.z),
+      Math.abs(B.quaternion.w),
+    );
+    expect(bAxisAngle).toBeGreaterThan(0.05); // > ~3°
+  });
+
   it('triangle of fastened mates: consistent closure', async () => {
     // Three bodies pinned together at a single connector each, with all
     // three pairs fastened. This is over-constrained but consistent

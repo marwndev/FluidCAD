@@ -1,15 +1,26 @@
-// Loop relaxation orchestrator.
+// Loop / chain relaxation orchestrator.
 //
 // After the spanning-tree warm-start has placed every body, walk each
-// component with closure edges and run a Levenberg-Marquardt pass over
-// the loop bodies' poses. The LM cost stacks per-mate residuals
-// (closure mates plus tree-edge mates that touch a loop body) plus an
-// optional drag residual when the user is dragging a body in this
-// loop.
+// connected component of the mate graph and run a Levenberg-Marquardt
+// pass when LM has work to do — either:
 //
-// Stage 2 ships a revolute-only path: any loop with a mate whose type
-// has no residual function yet is skipped silently. Stages 3+ add the
-// remaining mate-type residuals.
+//   (a) the component has a closure edge, OR
+//   (b) the user is dragging a body inside the component AND the
+//       component has at least one non-grounded body and one mate.
+//
+// (b) covers chains: e.g. `A grounded → revolute → B → revolute → C`
+// where the user drags C. Without LM, the spanning-tree warm-start
+// only rotates C around its parent's pivot — the upstream B never
+// rotates because the existing drag-of-cluster logic propagates only
+// through fastened mates. LM treats all non-grounded component bodies
+// as variables and the drag as a soft residual, so the entire chain's
+// joint angles cooperate to bring C's grab to the cursor (inverse
+// kinematics).
+//
+// LM cost: per-mate residuals for every mate in the component
+// (tree + closure) + an optional drag residual on the dragged body.
+// Per-mate residuals enforce the kinematic relations; the drag
+// residual is the soft cursor pin.
 
 import type { Vector3 } from 'three';
 import type { Component } from './graph.js';
@@ -38,13 +49,21 @@ type LoopMate = {
   childConn: ConnectorState;
 };
 
-const DRAG_WEIGHT = 100;
+// Drag is a SOFT cursor pin; closure / mate residuals are hard. With
+// equal weights, a 10 mm unreachable drag would produce drag-cost 100,
+// while breaking a closure by 1 mm produces cost 1 per residual scalar
+// (×5 for revolute = 5). LM would prefer the cheaper option (break
+// closure). Weighting drag ×0.5 keeps closure dominant when the cursor
+// is unreachable while still letting LM reach reachable cursors. This
+// matters mostly for closures (master plan §3.4); for chains the drag
+// is generally reachable and weight has little effect.
+const DRAG_WEIGHT = 0.5;
 
 /**
- * For every component with at least one closure edge, run an LM
- * relaxation over the loop bodies. Mutates the body poses in-place
- * when LM converges (or settles on a low-residual config); leaves
- * them unchanged on outright failure.
+ * For every component that needs LM (closure or drag-in-chain), run a
+ * relaxation pass. Mutates body poses in-place when LM converges (or
+ * settles on a low-residual config); leaves them at warm-start poses
+ * on outright failure.
  */
 export function applyLoopRelaxations(
   bodies: BodyState[],
@@ -54,9 +73,21 @@ export function applyLoopRelaxations(
   if (components.length === 0) return;
   const bodyById = new Map(bodies.map(b => [b.instanceId, b]));
   for (const component of components) {
-    if (component.closureEdges.length === 0) continue;
+    if (!shouldRelax(component, drag)) continue;
     relaxComponent(component, bodyById, drag);
   }
+}
+
+function shouldRelax(component: Component, drag: LoopDragInfo): boolean {
+  if (component.closureEdges.length > 0) return true;
+  if (drag.draggedInstanceId === undefined) return false;
+  const draggedInComponent = component.bodies
+    .some(b => b.instanceId === drag.draggedInstanceId);
+  if (!draggedInComponent) return false;
+  const hasFreedom = component.bodies.some(b => !b.grounded);
+  const hasMates = component.treeEdges.length > 0
+    || component.closureEdges.length > 0;
+  return hasFreedom && hasMates;
 }
 
 function relaxComponent(
@@ -64,36 +95,34 @@ function relaxComponent(
   bodyById: Map<string, BodyState>,
   drag: LoopDragInfo,
 ): void {
-  const loopMates = collectLoopMates(component, bodyById);
-  if (loopMates === null) return; // unsupported mate type in this loop
-  if (loopMates.length === 0) return;
+  const componentMates = collectComponentMates(component, bodyById);
+  if (componentMates === null) return; // unsupported mate type
+  if (componentMates.length === 0) return;
 
-  // Variables: 7 floats per non-grounded loop body. Grounded bodies on
-  // a loop stay constant (they're referenced by residuals via the
-  // shared BodyState refs but their pose never changes).
-  const loopBodyIds = [...component.loopBodies];
-  const loopBodies = loopBodyIds
-    .map(id => bodyById.get(id))
-    .filter((b): b is BodyState => b !== undefined && !b.grounded);
-  if (loopBodies.length === 0) return;
+  // Variables: 7 floats per non-grounded body in this component.
+  // Includes both loop bodies and chain bodies — the LM doesn't need
+  // to distinguish, and including all of them lets a chain's drag
+  // propagate up through revolute/slider/etc. links to the root.
+  const variableBodies = component.bodies.filter(b => !b.grounded);
+  if (variableBodies.length === 0) return;
 
-  const n = loopBodies.length * 7;
+  const n = variableBodies.length * 7;
   const x0 = new Float64Array(n);
-  packBodies(loopBodies, x0);
+  packBodies(variableBodies, x0);
 
   // Save originals so we can restore on outright LM failure.
-  const originals = loopBodies.map(b => ({
+  const originals = variableBodies.map(b => ({
     pos: b.position.clone(),
     quat: b.quaternion.clone(),
   }));
 
   const evaluate = (x: Float64Array): Float64Array => {
-    unpackBodies(loopBodies, x);
-    return computeResiduals(loopMates, loopBodies, drag);
+    unpackBodies(variableBodies, x);
+    return computeResiduals(componentMates, variableBodies, drag);
   };
 
   const normalize = (x: Float64Array): void => {
-    for (let i = 0; i < loopBodies.length; i++) {
+    for (let i = 0; i < variableBodies.length; i++) {
       const off = i * 7 + 3;
       const qx = x[off], qy = x[off + 1], qz = x[off + 2], qw = x[off + 3];
       const len = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
@@ -110,40 +139,31 @@ function relaxComponent(
 
   const result = runLM(x0, evaluate, normalize);
 
-  // Accept the LM output if it converged OR if it landed on a
-  // configuration noticeably better than where we started. Otherwise
-  // restore the warm-start poses so a failed LM doesn't visibly
-  // disrupt the assembly.
   const acceptable = result.converged || result.residualNorm < 1e-2;
   if (acceptable) {
-    unpackBodies(loopBodies, result.x);
+    unpackBodies(variableBodies, result.x);
   } else {
-    for (let i = 0; i < loopBodies.length; i++) {
-      loopBodies[i].position.copy(originals[i].pos);
-      loopBodies[i].quaternion.copy(originals[i].quat);
+    for (let i = 0; i < variableBodies.length; i++) {
+      variableBodies[i].position.copy(originals[i].pos);
+      variableBodies[i].quaternion.copy(originals[i].quat);
     }
   }
 }
 
 /**
- * Resolve every mate that touches at least one loop body into a
- * uniform `LoopMate` shape (parent/child + connector refs). Tree edges
- * keep their parent→child direction; closure mates use connectorA →
- * connectorB. Returns `null` if any loop-touching mate is of a type
- * that doesn't have a residual function yet — the caller treats that
- * as "skip this loop" so unsupported types don't silently emit garbage.
+ * Resolve every mate in the component (tree + closure) into a uniform
+ * `LoopMate` shape (parent/child + connector refs). Tree edges keep
+ * their parent→child direction; closure mates use connectorA →
+ * connectorB. Returns `null` if any mate is of a type that doesn't
+ * have a residual function yet — the caller treats that as "skip this
+ * component" so unsupported types don't silently emit garbage.
  */
-function collectLoopMates(
+function collectComponentMates(
   component: Component,
   bodyById: Map<string, BodyState>,
 ): LoopMate[] | null {
   const out: LoopMate[] = [];
-  const touchesLoop = (mate: MateRecord): boolean =>
-    component.loopBodies.has(mate.connectorA.instanceId)
-    || component.loopBodies.has(mate.connectorB.instanceId);
-
   for (const edge of component.treeEdges) {
-    if (!touchesLoop(edge.mate)) continue;
     if (!hasResidual(edge.mate.type)) return null;
     out.push({
       mate: edge.mate,
@@ -180,37 +200,35 @@ function hasResidual(type: MateRecord['type']): boolean {
     case 'cylindrical':
     case 'planar':
       return true;
-    // 'parallel' and 'pin-slot' arrive in phases 11/12.
     default:
       return false;
   }
 }
 
 function computeResiduals(
-  loopMates: LoopMate[],
-  loopBodies: BodyState[],
+  componentMates: LoopMate[],
+  variableBodies: BodyState[],
   drag: LoopDragInfo,
 ): Float64Array {
   let total = 0;
-  // First pass: count residuals to size the buffer once.
-  for (const lm of loopMates) total += residualDimension(lm.mate.type);
+  for (const lm of componentMates) total += residualDimension(lm.mate.type);
   const dragApplies =
     drag.draggedInstanceId !== undefined
     && drag.draggedCursorWorld !== undefined
     && drag.draggedGrabLocal !== undefined
-    && loopBodies.some(b => b.instanceId === drag.draggedInstanceId);
+    && variableBodies.some(b => b.instanceId === drag.draggedInstanceId);
   if (dragApplies) total += 3;
 
   const out = new Float64Array(total);
   let i = 0;
-  for (const lm of loopMates) {
+  for (const lm of componentMates) {
     const r = matchResidual(lm);
     for (const v of r) {
       out[i++] = v;
     }
   }
   if (dragApplies) {
-    const dragged = loopBodies.find(b => b.instanceId === drag.draggedInstanceId)!;
+    const dragged = variableBodies.find(b => b.instanceId === drag.draggedInstanceId)!;
     const r = residualDrag(dragged, drag.draggedGrabLocal!, drag.draggedCursorWorld!);
     for (const v of r) {
       out[i++] = v * DRAG_WEIGHT;
@@ -248,9 +266,9 @@ function matchResidual(lm: LoopMate): number[] {
   }
 }
 
-function packBodies(loopBodies: BodyState[], x: Float64Array): void {
-  for (let i = 0; i < loopBodies.length; i++) {
-    const b = loopBodies[i];
+function packBodies(variableBodies: BodyState[], x: Float64Array): void {
+  for (let i = 0; i < variableBodies.length; i++) {
+    const b = variableBodies[i];
     const off = i * 7;
     x[off] = b.position.x;
     x[off + 1] = b.position.y;
@@ -262,9 +280,9 @@ function packBodies(loopBodies: BodyState[], x: Float64Array): void {
   }
 }
 
-function unpackBodies(loopBodies: BodyState[], x: Float64Array): void {
-  for (let i = 0; i < loopBodies.length; i++) {
-    const b = loopBodies[i];
+function unpackBodies(variableBodies: BodyState[], x: Float64Array): void {
+  for (let i = 0; i < variableBodies.length; i++) {
+    const b = variableBodies[i];
     const off = i * 7;
     b.position.set(x[off], x[off + 1], x[off + 2]);
     // Three.js's applyQuaternion assumes unit-norm input; LM's FD step
