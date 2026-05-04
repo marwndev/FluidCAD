@@ -30,10 +30,13 @@ export type MateOptions = {
 // a 1 mm position error costs 1 — so LM tolerates visibly-tilted
 // solutions to gain tiny position improvements. Multiplying by a
 // length scale (~ typical link size in mm) makes a 1° tilt cost
-// `(0.017 × 60)² ≈ 1`, comparable to a 1 mm error, so LM keeps
-// orientations tight. The number is a heuristic; the exact value
-// matters less than its order of magnitude.
-const ORIENTATION_WEIGHT = 60;
+// `(0.017 × 25)² ≈ 0.18`, comparable to a 0.4 mm error.
+//
+// Higher values keep orientation tighter but make LM "stiffer" — closed
+// loops can struggle to close when orientation residuals dominate the
+// cost. 25 is a compromise that keeps tilt below ~1° while letting LM
+// reduce closure gaps to sub-millimeter.
+const ORIENTATION_WEIGHT = 25;
 
 /**
  * Revolute residual (5 components):

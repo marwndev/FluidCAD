@@ -64,9 +64,12 @@ export function runLM(
   normalize: ((x: Float64Array) => void) | null,
   options: LMOptions = {},
 ): LMResult {
-  const maxIters = options.maxIters ?? 80;
+  const maxIters = options.maxIters ?? 250;
   const tol = options.tol ?? 1e-9;
-  const initLambda = options.initLambda ?? 1e-3;
+  // Smaller initial damping: first step is more Gauss-Newton-like, which
+  // converges faster on well-conditioned problems (the typical case for
+  // closed mate loops). Damping ramps up automatically on rejected steps.
+  const initLambda = options.initLambda ?? 1e-5;
   const hRel = options.fdStep ?? 1e-6;
 
   const n = x0.length;
@@ -85,15 +88,22 @@ export function runLM(
   const xTrial = new Float64Array(n);
 
   for (let iter = 0; iter < maxIters; iter++) {
-    // Forward-FD Jacobian: J[k, j] = (r(x + h*e_j)[k] - r(x)[k]) / h.
+    // Centered-FD Jacobian: J[k, j] = (r(x+h)[k] - r(x-h)[k]) / (2h).
+    // 2× cost vs forward FD but better accuracy near zero (forward FD
+    // gives only ~1 digit of meaningful gradient at our step sizes,
+    // and closed mate loops have residuals that hover near 0 as LM
+    // approaches closure). The extra digit is the difference between
+    // "converged" and "stuck a few mm short".
     for (let j = 0; j < n; j++) {
       const h = hRel * Math.max(1, Math.abs(x[j]));
       const saved = x[j];
       x[j] = saved + h;
-      const rPlus = evaluate(x);
+      const rPlus = new Float64Array(evaluate(x));
+      x[j] = saved - h;
+      const rMinus = evaluate(x);
       x[j] = saved;
       for (let k = 0; k < m; k++) {
-        J[k * n + j] = (rPlus[k] - r[k]) / h;
+        J[k * n + j] = (rPlus[k] - rMinus[k]) / (2 * h);
       }
     }
 

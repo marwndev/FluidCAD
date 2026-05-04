@@ -63,9 +63,24 @@ export function applyTreeWarmStarts(
   drag: TreeDragInfo = {},
 ): void {
   const bodyById = new Map(bodies.map(b => [b.instanceId, b]));
+  // Snapshot the input poses so per-edge warm-starts can decide
+  // "fresh assembly" (reseed) vs "drag in progress" (preserve) by
+  // checking whether the mate was satisfied at frame N — before any
+  // warm-start in this pass mutated the driver's pose. Without this,
+  // a drag step that moves the driver inevitably violates the
+  // current-state mate satisfaction by the cursor delta, which the
+  // old check interpreted as "fresh, reseed", wiping out the
+  // follower's accumulated free-DOF rotation.
+  const prevPoses = new Map<string, { position: Vector3; quaternion: Quaternion }>();
+  for (const b of bodies) {
+    prevPoses.set(b.instanceId, {
+      position: b.position.clone(),
+      quaternion: b.quaternion.clone(),
+    });
+  }
   for (const component of components) {
     for (const edge of component.treeEdges) {
-      seedTreeEdge(edge, mates, drag, bodyById);
+      seedTreeEdge(edge, mates, drag, bodyById, prevPoses);
     }
   }
 }
@@ -88,11 +103,30 @@ export function applyTreeFixups(
   }
 }
 
+type PrevPoses = Map<string, { position: Vector3; quaternion: Quaternion }>;
+
+/**
+ * Returns a `BodyState` whose position and quaternion are the snapshot
+ * values from frame N (before any warm-start mutation in this pass).
+ * Used by per-edge seed functions that need to evaluate "was the mate
+ * satisfied at the start of this solve?" without being misled by
+ * upstream warm-start mutations that already happened in this pass.
+ *
+ * Returns null if no snapshot exists (shouldn't happen in normal
+ * flow, but keeps callers safe).
+ */
+function poseSnapshotBody(b: BodyState, prevPoses: PrevPoses): BodyState | null {
+  const snap = prevPoses.get(b.instanceId);
+  if (!snap) return null;
+  return { ...b, position: snap.position, quaternion: snap.quaternion };
+}
+
 function seedTreeEdge(
   edge: TreeEdge,
   mates: MateRecord[],
   drag: TreeDragInfo,
   bodyById: Map<string, BodyState>,
+  prevPoses: PrevPoses,
 ): void {
   const { parent, child, parentConn, childConn, mate } = edge;
   switch (mate.type) {
@@ -100,16 +134,16 @@ function seedTreeEdge(
       seedFastenedEdge(parent, child, parentConn, childConn, mate);
       break;
     case 'revolute':
-      seedRevoluteEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById);
+      seedRevoluteEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById, prevPoses);
       break;
     case 'slider':
-      seedSliderEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById);
+      seedSliderEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById, prevPoses);
       break;
     case 'cylindrical':
-      seedCylindricalEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById);
+      seedCylindricalEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById, prevPoses);
       break;
     case 'planar':
-      seedPlanarEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById);
+      seedPlanarEdge(parent, child, parentConn, childConn, mate, mates, drag, bodyById, prevPoses);
       break;
     // 'parallel' and 'pin-slot' have no warm-start yet; their tree edges
     // are no-ops (the child stays at its input pose). They'll be handled
@@ -203,15 +237,25 @@ function seedRevoluteEdge(
   allMates: MateRecord[],
   drag: TreeDragInfo,
   bodyById: Map<string, BodyState>,
+  prevPoses: PrevPoses,
 ): void {
   if (driver.grounded && follower.grounded) return;
   const options = mate.options ?? {};
 
-  // Initial seed (face-to-face / flipped chirality, plus `.rotate()`
-  // angle) only when current pose doesn't satisfy the mate. After that
-  // we preserve the orientation across solves so drags are persistent
-  // and `.rotate()` truly is a hint, not a snap-back.
-  if (!isRevoluteSatisfied(driver, follower, driverConn, followerConn, options)) {
+  // Decide reseed against the SNAPSHOT (frame N's input pose), not the
+  // mid-warm-start mutated state. When the driver gets dragged, the
+  // current driver pose has already moved, so a current-state check
+  // sees mate as violated by the cursor delta — re-seeding the
+  // follower would wipe its accumulated free-DOF rotation. Checking
+  // the snapshot tells us whether frame N's solved state had the mate
+  // satisfied (steady-state drag → preserve) or not (fresh assembly
+  // → reseed).
+  const driverSnap = poseSnapshotBody(driver, prevPoses);
+  const followerSnap = poseSnapshotBody(follower, prevPoses);
+  const wasSatisfied = driverSnap !== null && followerSnap !== null
+    && isRevoluteSatisfied(driverSnap, followerSnap, driverConn, followerConn, options);
+
+  if (!wasSatisfied) {
     const seed = computeFastenedTargetPose(driver, driverConn, followerConn, options);
     follower.position = seed.position;
     follower.quaternion = seed.quaternion;
@@ -382,14 +426,23 @@ function seedSliderEdge(
   allMates: MateRecord[],
   drag: TreeDragInfo,
   bodyById: Map<string, BodyState>,
+  prevPoses: PrevPoses,
 ): void {
   if (driver.grounded && follower.grounded) return;
   const options = mate.options ?? {};
   const seedOffsetZ = options.offset?.[2] ?? 0;
 
+  // Read slide value from frame N's snapshot, not the mid-warm-start
+  // state. Otherwise, dragging an upstream body changes the apparent
+  // slide value because the driver has moved but the follower hasn't
+  // — the follower would then drift from its previous slide each
+  // frame.
+  const driverSnap = poseSnapshotBody(driver, prevPoses);
+  const followerSnap = poseSnapshotBody(follower, prevPoses);
   let effectiveZ: number;
-  if (isSliderOnAxis(driver, follower, driverConn, followerConn)) {
-    effectiveZ = currentSliderZOffset(driver, driverConn, follower, followerConn);
+  if (driverSnap && followerSnap
+      && isSliderOnAxis(driverSnap, followerSnap, driverConn, followerConn)) {
+    effectiveZ = currentSliderZOffset(driverSnap, driverConn, followerSnap, followerConn);
   } else {
     effectiveZ = seedOffsetZ;
   }
@@ -506,16 +559,23 @@ function seedCylindricalEdge(
   allMates: MateRecord[],
   drag: TreeDragInfo,
   bodyById: Map<string, BodyState>,
+  prevPoses: PrevPoses,
 ): void {
   if (driver.grounded && follower.grounded) return;
   const options = mate.options ?? {};
   const seedSlide = options.offset?.[2] ?? 0;
   const seedAngle = options.rotate ?? 0;
 
+  // Read slide/angle from snapshot (frame N) so dragging an upstream
+  // body doesn't drift the slide/angle away from the user's previous
+  // values just because the driver moved this frame.
+  const driverSnap = poseSnapshotBody(driver, prevPoses);
+  const followerSnap = poseSnapshotBody(follower, prevPoses);
   let slide: number;
   let angle: number;
-  if (isCylindricalSatisfied(driver, follower, driverConn, followerConn)) {
-    const state = currentCylindricalState(driver, follower, driverConn, followerConn);
+  if (driverSnap && followerSnap
+      && isCylindricalSatisfied(driverSnap, followerSnap, driverConn, followerConn)) {
+    const state = currentCylindricalState(driverSnap, followerSnap, driverConn, followerConn);
     slide = state.slide;
     angle = state.angle;
   } else {
@@ -686,17 +746,24 @@ function seedPlanarEdge(
   allMates: MateRecord[],
   drag: TreeDragInfo,
   bodyById: Map<string, BodyState>,
+  prevPoses: PrevPoses,
 ): void {
   if (driver.grounded && follower.grounded) return;
   const options = mate.options ?? {};
   const dz = options.offset?.[2] ?? 0;
   const seedAngle = options.rotate ?? 0;
 
+  // Read xLocal/yLocal/angle from snapshot (frame N) so dragging an
+  // upstream body doesn't drift the in-plane translation/rotation
+  // away from the user's previous values.
+  const driverSnap = poseSnapshotBody(driver, prevPoses);
+  const followerSnap = poseSnapshotBody(follower, prevPoses);
   let xLocal: number;
   let yLocal: number;
   let angle: number;
-  if (isPlanarSatisfied(driver, follower, driverConn, followerConn, dz)) {
-    const state = currentPlanarState(driver, follower, driverConn, followerConn, dz);
+  if (driverSnap && followerSnap
+      && isPlanarSatisfied(driverSnap, followerSnap, driverConn, followerConn, dz)) {
+    const state = currentPlanarState(driverSnap, followerSnap, driverConn, followerConn, dz);
     xLocal = state.x;
     yLocal = state.y;
     angle = state.angle;
