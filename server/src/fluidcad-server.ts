@@ -216,12 +216,14 @@ export class FluidCadServer {
     const rollbackIndex = index >= totalObjects - 1 ? totalObjects - 1 : index;
     this.sceneManager.rollbackScene(scene, rollbackIndex);
     const result = scene.getRenderedObjects();
+    const assembly = this.sceneManager.getAssemblyData(scene);
 
     return {
       absPath: fileName,
       sceneKind: detectKind(fileName) ?? 'part',
       result,
       rollbackStop: index,
+      ...(assembly ? { assembly } : {}),
     };
   }
 

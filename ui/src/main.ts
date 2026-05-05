@@ -1200,8 +1200,15 @@ function connectWebSocket() {
         const sceneKind: 'part' | 'assembly' = msg.sceneKind === 'assembly' ? 'assembly' : 'part';
         viewer.isTrimming = !isRollback && trimPickState === 'picking-active';
         viewer.isBezierDrawing = !isRollback && isBezierDrawingScene(msg.result);
-        if (sceneKind === 'assembly' && msg.assembly) {
-          viewer.updateAssemblyView(msg.result, msg.assembly);
+        if (sceneKind === 'assembly') {
+          // Some server paths (e.g. rollback, compile-error before any
+          // successful processing) emit a scene-rendered without `assembly`.
+          // Falling back to updateView would call buildSceneMesh on the raw
+          // result and render every Part declared in the file, including ones
+          // never passed to insert(...). Synthesize an empty assembly so the
+          // controller's filter always runs.
+          const assembly: SerializedAssembly = msg.assembly ?? { instances: [], mates: [] };
+          viewer.updateAssemblyView(msg.result, assembly);
         } else {
           viewer.updateView(msg.result, isRollback, msg.rollbackStop);
         }

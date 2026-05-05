@@ -28,18 +28,9 @@ function mate(type: MateType, a: unknown, b: unknown): MateBuilder {
   }
 
   const sourceLocation = captureSourceLocation();
-  const mateId = sourceLocation
-    ? `${sourceLocation.line}:${sourceLocation.column}`
-    : `mate-${scene.getMates().length}`;
-
-  for (const existing of scene.getMates()) {
-    if (existing.mateId === mateId) {
-      throw new Error(
-        "mate(): two mates on the same source line — put each mate(...) on its own line.",
-      );
-    }
-  }
-
+  // Counter-based id; see insert.ts for the rationale (line-derived ids
+  // collided across edits and caused the UI to reuse the wrong record).
+  const mateId = `mate-${scene.getMates().length}`;
   const record = makeAssemblyMate(type, a, b, mateId, sourceLocation ?? undefined);
   scene.addMate(record);
   return new MateBuilder(record);

@@ -15,17 +15,13 @@ function insert<P extends IPart>(part: P): Instance<P> {
   }
 
   const sourceLocation = captureSourceLocation();
-  const instanceId = sourceLocation
-    ? `${sourceLocation.line}:${sourceLocation.column}`
-    : `inst-${scene.getInstances().length}`;
-
-  for (const existing of scene.getInstances()) {
-    if (existing.instanceId === instanceId) {
-      throw new Error(
-        "insert(): two inserts on the same source line — put each insert(...) on its own line.",
-      );
-    }
-  }
+  // Counter-based id, stable across source edits. Source-line-derived ids
+  // collided when a blank-line insertion shifted later inserts onto a row
+  // already used by an earlier one (e.g. new `right` landing on old `front`'s
+  // `line:col`), and the UI controller's instance map keyed off id would then
+  // reuse the wrong part's mesh. `sourceLocation` is preserved separately on
+  // the record for drag-release `.at(...)` writeback.
+  const instanceId = `inst-${scene.getInstances().length}`;
 
   const record: AssemblyInstance = {
     instanceId,

@@ -24,6 +24,43 @@ function expandBoxExcludingMeta(box: Box3, object: Object3D): void {
   }
 }
 
+/**
+ * Keep only parts referenced by some `inst.partId` and the entire subtree
+ * under each kept part. An assembly file declares every part it might use
+ * (typically via factory functions like `getExtrusion(...)`), but only the
+ * ones passed to `insert(...)` should appear in the viewport. Filtering
+ * here means a `rebuildSceneMesh()` triggered by theme/region-pick can't
+ * materialize an un-inserted part at world origin.
+ */
+function filterToReferencedParts(
+  sceneObjects: SceneObjectRender[],
+  instances: SerializedAssembly['instances'],
+): SceneObjectRender[] {
+  const referencedPartIds = new Set(instances.map(i => i.partId));
+  const childrenByParent = new Map<string, SceneObjectRender[]>();
+  for (const obj of sceneObjects) {
+    if (!obj.parentId) continue;
+    const list = childrenByParent.get(obj.parentId);
+    if (list) list.push(obj);
+    else childrenByParent.set(obj.parentId, [obj]);
+  }
+  const keep = new Set<string>();
+  const stack: SceneObjectRender[] = [];
+  for (const obj of sceneObjects) {
+    if (obj.type === 'part' && obj.id && referencedPartIds.has(obj.id)) {
+      stack.push(obj);
+    }
+  }
+  while (stack.length > 0) {
+    const obj = stack.pop()!;
+    if (!obj.id || keep.has(obj.id)) continue;
+    keep.add(obj.id);
+    const children = childrenByParent.get(obj.id);
+    if (children) stack.push(...children);
+  }
+  return sceneObjects.filter(obj => obj.id && keep.has(obj.id));
+}
+
 const HIGHLIGHT_EDGE_LINE_WIDTH = 2;
 const HOVER_EDGE_LINE_WIDTH = 2;
 
@@ -425,6 +462,14 @@ export class Viewer {
   }
 
   updateAssemblyView(sceneObjects: SceneObjectRender[], assembly: SerializedAssembly): void {
+    // The render result contains every Part declared in the file, including
+    // ones never passed to `insert(...)` (calling `getExtrusion('80x160', …)`
+    // for its side-effect of registering the Part in the scene puts it in
+    // the result). Drop those subtrees so a stray `rebuildSceneMesh()` (theme
+    // change, region pick) can't materialize an un-inserted part at world
+    // origin, and so the controller's part-template map / connector lookup
+    // doesn't waste time on them.
+    sceneObjects = filterToReferencedParts(sceneObjects, assembly.instances);
     this.sceneObjects = sceneObjects;
     this.highlightedShapeId = null;
     this.highlightedSub = null;
