@@ -3,10 +3,32 @@ import { Plane } from "../math/plane.js";
 import { Vertex } from "../common/vertex.js";
 import { ConnectorInput, ConnectorOptions, frameFromSource } from "./connector-frame.js";
 import { IConnector } from "../core/interfaces.js";
+import { rad } from "../helpers/math-helpers.js";
 
 const FRAME_STATE_KEY = 'connector-frame';
 
+type ConnectorTransform =
+  | { kind: "rotate"; axis: "x" | "y" | "z"; angle: number }
+  | { kind: "offset"; x: number; y: number; z: number };
+
+function applyConnectorTransform(frame: Plane, t: ConnectorTransform): Plane {
+  if (t.kind === "rotate") {
+    const axis =
+      t.axis === "x" ? frame.xAxis :
+      t.axis === "y" ? frame.yAxis :
+                       frame.zAxis;
+    // Public API takes degrees (matching `Plane.transform` / `rotate(angle)` DSL);
+    // Plane.rotateAroundAxis expects radians.
+    return frame.rotateAroundAxis(axis, rad(t.angle));
+  }
+  const delta = frame.xDirection.multiply(t.x)
+    .add(frame.yDirection.multiply(t.y))
+    .add(frame.normal.multiply(t.z));
+  return frame.translateVector(delta);
+}
+
 export class Connector extends SceneObject implements IConnector {
+  private transforms: ConnectorTransform[] = [];
 
   constructor(
     public sourceShape: ConnectorInput,
@@ -15,8 +37,21 @@ export class Connector extends SceneObject implements IConnector {
     super();
   }
 
+  rotate(axis: "x" | "y" | "z", angle: number): this {
+    this.transforms.push({ kind: "rotate", axis, angle });
+    return this;
+  }
+
+  offset(x: number = 0, y: number = 0, z: number = 0): this {
+    this.transforms.push({ kind: "offset", x, y, z });
+    return this;
+  }
+
   build(_context?: BuildSceneObjectContext) {
-    const frame = frameFromSource(this.sourceShape, this.options);
+    let frame = frameFromSource(this.sourceShape, this.options);
+    for (const t of this.transforms) {
+      frame = applyConnectorTransform(frame, t);
+    }
     this.setState(FRAME_STATE_KEY, frame);
 
     // The connector consumes its source — the face/edge/vertex selection
@@ -42,7 +77,9 @@ export class Connector extends SceneObject implements IConnector {
   }
 
   override createCopy(_remap: Map<SceneObject, SceneObject>): SceneObject {
-    return new Connector(this.sourceShape, this.options);
+    const copy = new Connector(this.sourceShape, this.options);
+    copy.transforms = [...this.transforms];
+    return copy;
   }
 
   compareTo(other: Connector): boolean {
@@ -56,6 +93,9 @@ export class Connector extends SceneObject implements IConnector {
       return false;
     }
     if (JSON.stringify(this.options) !== JSON.stringify(other.options)) {
+      return false;
+    }
+    if (JSON.stringify(this.transforms) !== JSON.stringify(other.transforms)) {
       return false;
     }
     return true;

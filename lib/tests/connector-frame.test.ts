@@ -23,7 +23,7 @@ describe("connector frame", () => {
     part("face-frame", () => {
       sketch("xy", () => rect(40, 60));
       extrude(20);
-      conn = connector(select(face().planar().onPlane("xy", 20))) as Connector;
+      conn = connector(select(face().planar().onPlane("xy", 20))) as unknown as Connector;
     });
 
     render();
@@ -59,7 +59,7 @@ describe("connector frame", () => {
       // extrude(-50) sweeps along +Y → box (-40..40, 0..50, 0..120).
       sketch("front", () => rect(80, 120).centered("horizontal"));
       extrude(-50);
-      frontConn = connector(select(face().planar().onPlane("yz", 40))) as Connector;
+      frontConn = connector(select(face().planar().onPlane("yz", 40))) as unknown as Connector;
     });
     render();
 
@@ -69,7 +69,7 @@ describe("connector frame", () => {
       // extrude(-50) sweeps along -X → box (-50..0, -40..40, 0..120).
       sketch("right", () => rect(80, 120).centered("horizontal"));
       extrude(-50);
-      rightConn = connector(select(face().planar().onPlane("yz", 0))) as Connector;
+      rightConn = connector(select(face().planar().onPlane("yz", 0))) as unknown as Connector;
     });
     render();
 
@@ -99,10 +99,10 @@ describe("connector frame", () => {
       sketch("xy", () => rect(100, 60).centered());
       extrude(40);
       conns = {
-        right: connector(select(face().planar().onPlane("yz", 50))) as Connector,
-        left: connector(select(face().planar().onPlane("yz", -50))) as Connector,
-        front: connector(select(face().planar().onPlane("xz", 30))) as Connector,
-        back: connector(select(face().planar().onPlane("xz", -30))) as Connector,
+        right: connector(select(face().planar().onPlane("yz", 50))) as unknown as Connector,
+        left: connector(select(face().planar().onPlane("yz", -50))) as unknown as Connector,
+        front: connector(select(face().planar().onPlane("xz", 30))) as unknown as Connector,
+        back: connector(select(face().planar().onPlane("xz", -30))) as unknown as Connector,
       };
     });
 
@@ -138,7 +138,7 @@ describe("connector frame", () => {
     part("edge-frame", () => {
       sketch("xy", () => circle(10));
       extrude(15);
-      conn = connector(select(edge().circle().onPlane("xy", 15))) as Connector;
+      conn = connector(select(edge().circle().onPlane("xy", 15))) as unknown as Connector;
     });
 
     render();
@@ -159,7 +159,7 @@ describe("connector frame", () => {
     part("plane-frame", () => {
       sketch("xy", () => rect(20, 20));
       extrude(5);
-      conn = connector(plane("xy")) as Connector;
+      conn = connector(plane("xy")) as unknown as Connector;
     });
 
     render();
@@ -179,7 +179,7 @@ describe("connector frame", () => {
       conn = connector(
         select(face().planar().onPlane("xy", 20)),
         { xDirection: 'y' },
-      ) as Connector;
+      ) as unknown as Connector;
     });
 
     render();
@@ -202,7 +202,7 @@ describe("connector frame", () => {
     part("ortho-frame", () => {
       sketch("xy", () => rect(40, 60));
       extrude(20);
-      conn = connector(select(face().planar().onPlane("xy", 20))) as Connector;
+      conn = connector(select(face().planar().onPlane("xy", 20))) as unknown as Connector;
     });
 
     render();
@@ -222,7 +222,7 @@ describe("connector frame", () => {
       const p = part("stable-" + height, () => {
         sketch("xy", () => rect(40, 60));
         extrude(height);
-        conn = connector(select(face().planar().onPlane("xy", height))) as Connector;
+        conn = connector(select(face().planar().onPlane("xy", height))) as unknown as Connector;
       });
       render();
       return { p, conn };
@@ -246,7 +246,7 @@ describe("connector frame", () => {
         topEdge = r.topEdge();
       });
       extrude(20);
-      conn = connector(topEdge) as Connector;
+      conn = connector(topEdge) as unknown as Connector;
     });
 
     render();
@@ -294,6 +294,167 @@ describe("connector frame", () => {
     expect(newSerialized.origin.x).toBeCloseTo(oldSerialized.origin.x, 6);
     expect(newSerialized.origin.y).toBeCloseTo(oldSerialized.origin.y, 6);
     expect(newSerialized.origin.z).toBeCloseTo(oldSerialized.origin.z, 6);
+  });
+
+  it("offset(x, y, z) shifts the origin along the connector's local axes", () => {
+    let conn!: Connector;
+    part("offset-local", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .offset(1, 2, 3) as unknown as Connector;
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    // Top face frame: origin (20,30,20), xDir=+X, yDir=+Y, normal=+Z.
+    // 1·xDir + 2·yDir + 3·normal = (1, 2, 3) world delta.
+    expect(frame.origin.x).toBeCloseTo(21, 5);
+    expect(frame.origin.y).toBeCloseTo(32, 5);
+    expect(frame.origin.z).toBeCloseTo(23, 5);
+    // Axes unchanged.
+    expect(frame.xDirection.x).toBeCloseTo(1, 5);
+    expect(frame.yDirection.y).toBeCloseTo(1, 5);
+    expect(frame.normal.z).toBeCloseTo(1, 5);
+  });
+
+  it("offset() with omitted args defaults to 0", () => {
+    let conn!: Connector;
+    part("offset-defaults", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .offset(0, 0, 5) as unknown as Connector;
+      // call form .offset(z) only (omitted x, y) should match
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    expect(frame.origin.z).toBeCloseTo(25, 5);
+  });
+
+  it('rotate("z", 90) on a +Z face spins xDirection in-plane', () => {
+    let conn!: Connector;
+    part("rotate-z", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("z", 90) as unknown as Connector;
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    // Original X = +X. Rotate +90° around +Z → +Y.
+    expect(frame.xDirection.x).toBeCloseTo(0, 5);
+    expect(frame.xDirection.y).toBeCloseTo(1, 5);
+    expect(frame.xDirection.z).toBeCloseTo(0, 5);
+    // Normal unchanged (rotated around itself).
+    expect(frame.normal.z).toBeCloseTo(1, 5);
+    // Origin unchanged (rotation pivots through origin).
+    expect(frame.origin.x).toBeCloseTo(20, 5);
+    expect(frame.origin.y).toBeCloseTo(30, 5);
+    expect(frame.origin.z).toBeCloseTo(20, 5);
+  });
+
+  it('rotate("x", 90) tilts the normal off the face', () => {
+    let conn!: Connector;
+    part("rotate-x", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("x", 90) as unknown as Connector;
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    // xDirection unchanged (rotated around itself).
+    expect(frame.xDirection.x).toBeCloseTo(1, 5);
+    // Normal was +Z, rotated +90° around +X → -Y (right-hand rule).
+    expect(frame.normal.x).toBeCloseTo(0, 5);
+    expect(frame.normal.y).toBeCloseTo(-1, 5);
+    expect(frame.normal.z).toBeCloseTo(0, 5);
+    // Frame stays orthonormal.
+    expect(Math.abs(frame.xDirection.dot(frame.normal))).toBeLessThan(EPS);
+    expect(Math.abs(frame.xDirection.dot(frame.yDirection))).toBeLessThan(EPS);
+    expect(Math.abs(frame.yDirection.dot(frame.normal))).toBeLessThan(EPS);
+  });
+
+  it("offset then rotate uses the shifted origin as pivot", () => {
+    let conn!: Connector;
+    part("offset-then-rotate", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .offset(5, 0, 0)
+        .rotate("z", 90) as unknown as Connector;
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    // After offset: origin (25, 30, 20). Then rotate around its Z (still +Z)
+    // through (25, 30, 20) — origin doesn't change since the pivot IS the origin.
+    expect(frame.origin.x).toBeCloseTo(25, 5);
+    expect(frame.origin.y).toBeCloseTo(30, 5);
+    // xDirection rotated +90° around +Z → +Y.
+    expect(frame.xDirection.y).toBeCloseTo(1, 5);
+  });
+
+  it("rotate then offset translates along the rotated axes", () => {
+    let conn!: Connector;
+    part("rotate-then-offset", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      conn = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("z", 90)
+        .offset(5, 0, 0) as unknown as Connector;
+    });
+
+    render();
+
+    const frame = conn.getFrame();
+    // After rotate: xDirection = +Y. offset(5, 0, 0) moves +5 along the new X (+Y).
+    // Origin: (20, 30, 20) + 5·(0, 1, 0) = (20, 35, 20).
+    expect(frame.origin.x).toBeCloseTo(20, 5);
+    expect(frame.origin.y).toBeCloseTo(35, 5);
+    expect(frame.origin.z).toBeCloseTo(20, 5);
+  });
+
+  it("identical transform chains compare equal; different ones do not", () => {
+    let connA!: Connector;
+    let connB!: Connector;
+    let connC!: Connector;
+    part("compare-A", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      connA = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("z", 45)
+        .offset(0, 0, 5) as unknown as Connector;
+    });
+    render();
+    part("compare-B", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      connB = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("z", 45)
+        .offset(0, 0, 5) as unknown as Connector;
+    });
+    render();
+    part("compare-C", () => {
+      sketch("xy", () => rect(40, 60));
+      extrude(20);
+      connC = connector(select(face().planar().onPlane("xy", 20)))
+        .rotate("z", 45)
+        .offset(0, 0, 6) as unknown as Connector;
+    });
+    render();
+
+    expect(connA.compareTo(connB)).toBe(true);
+    expect(connA.compareTo(connC)).toBe(false);
   });
 
   it("connectors are tracked as Part children in source order", () => {

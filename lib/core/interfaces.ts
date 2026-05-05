@@ -115,8 +115,28 @@ export interface ISelect extends ISceneObject {}
 /**
  * A mate connector attached to a part — a coordinate frame the assembly
  * pipeline can reference. Returned by the `connector(...)` DSL.
+ *
+ * `rotate` and `offset` adjust the frame in its **local** axes (not world),
+ * so the connector's own xDirection / yDirection / normal define the
+ * transform — chaining calls composes left-to-right against the *current*
+ * (already-transformed) frame.
  */
-export interface IConnector extends ISceneObject {}
+export interface IConnector extends ISceneObject {
+  /**
+   * Rotate the connector frame around its own local X, Y, or Z axis,
+   * pivoting at its current origin.
+   * @param axis - "x", "y", or "z" — the connector's local axis name.
+   * @param angle - Rotation in degrees.
+   */
+  rotate(axis: "x" | "y" | "z", angle: number): this;
+
+  /**
+   * Translate the connector origin along its own local axes:
+   * `x · xDirection + y · yDirection + z · normal`. Omitted components
+   * default to 0. Axes are unchanged.
+   */
+  offset(x?: number, y?: number, z?: number): this;
+}
 
 /**
  * A reusable design unit returned by the `part(...)` DSL. Parts can be
