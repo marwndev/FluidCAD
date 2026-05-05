@@ -68,13 +68,80 @@ describe("assembly scene", () => {
     expect(scene.getInstances()[0].position).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it("Instance has grounded(), name(), and at(), but no orient() yet", () => {
+  it("Instance has grounded(), name(), at(), and rotate(), but no orient() yet", () => {
     const { p } = startAssemblyWithPart();
     const inst = insert(p);
     expect(typeof inst.grounded).toBe("function");
     expect(typeof inst.name).toBe("function");
     expect(typeof inst.at).toBe("function");
+    expect(typeof inst.rotate).toBe("function");
     expect("orient" in inst).toBe(false);
+  });
+
+  it(".rotate('x', 90) sets quaternion to a 90deg rotation around X and leaves position at origin", () => {
+    const { p } = startAssemblyWithPart();
+    const inst = insert(p).rotate("x", 90);
+    const half = Math.SQRT1_2;
+    expect(inst.record.quaternion.x).toBeCloseTo(half);
+    expect(inst.record.quaternion.y).toBeCloseTo(0);
+    expect(inst.record.quaternion.z).toBeCloseTo(0);
+    expect(inst.record.quaternion.w).toBeCloseTo(half);
+    expect(inst.record.position.x).toBeCloseTo(0);
+    expect(inst.record.position.y).toBeCloseTo(0);
+    expect(inst.record.position.z).toBeCloseTo(0);
+  });
+
+  it(".rotate takes degrees, not radians", () => {
+    const { p } = startAssemblyWithPart();
+    const inst = insert(p).rotate("z", 180);
+    expect(inst.record.quaternion.x).toBeCloseTo(0);
+    expect(inst.record.quaternion.y).toBeCloseTo(0);
+    expect(inst.record.quaternion.z).toBeCloseTo(1);
+    expect(inst.record.quaternion.w).toBeCloseTo(0);
+  });
+
+  it(".rotate calls compose left-to-right: two 90deg around X equals 180deg around X", () => {
+    const { p } = startAssemblyWithPart();
+    const a = insert(p).rotate("x", 90).rotate("x", 90);
+    const b = insert(p).rotate("x", 180);
+    expect(a.record.quaternion.x).toBeCloseTo(b.record.quaternion.x);
+    expect(a.record.quaternion.y).toBeCloseTo(b.record.quaternion.y);
+    expect(a.record.quaternion.z).toBeCloseTo(b.record.quaternion.z);
+    expect(a.record.quaternion.w).toBeCloseTo(b.record.quaternion.w);
+  });
+
+  it(".at then .rotate around world Z moves the position around the Z axis line", () => {
+    const { p } = startAssemblyWithPart();
+    const inst = insert(p).at(5, 0, 0).rotate("z", 90);
+    expect(inst.record.position.x).toBeCloseTo(0);
+    expect(inst.record.position.y).toBeCloseTo(5);
+    expect(inst.record.position.z).toBeCloseTo(0);
+  });
+
+  it(".rotate then .at: rotate happens at origin, then .at overwrites position", () => {
+    const { p } = startAssemblyWithPart();
+    const inst = insert(p).rotate("z", 90).at(5, 0, 0);
+    expect(inst.record.position).toEqual({ x: 5, y: 0, z: 0 });
+  });
+
+  it(".rotate returns this for chaining", () => {
+    const { p } = startAssemblyWithPart();
+    const inst = insert(p);
+    expect(inst.rotate("x", 90)).toBe(inst);
+    expect(inst.rotate("y", 45).grounded().name("foo")).toBe(inst);
+    expect(inst.record.grounded).toBe(true);
+    expect(inst.record.name).toBe("foo");
+  });
+
+  it("re-parsing always restarts instances at identity quaternion", () => {
+    {
+      const { p } = startAssemblyWithPart();
+      const inst = insert(p).rotate("x", 90);
+      expect(inst.record.quaternion.w).toBeCloseTo(Math.SQRT1_2);
+    }
+    const { p, scene } = startAssemblyWithPart();
+    insert(p);
+    expect(scene.getInstances()[0].quaternion).toEqual({ x: 0, y: 0, z: 0, w: 1 });
   });
 
   it(".grounded().name('foo') and .name('foo').grounded() produce identical records", () => {

@@ -1,6 +1,10 @@
 import { AssemblyInstance } from "../rendering/assembly-scene.js";
 import { BoundConnector } from "./connector.js";
 import { IConnector } from "../core/interfaces.js";
+import { AxisLike, toAxis } from "../math/axis.js";
+import { Quaternion } from "../math/quaternion.js";
+import { Vector3d } from "../math/vector3d.js";
+import { rad } from "../helpers/math-helpers.js";
 
 /**
  * Type of `Instance.connectors` derived from the part's exposed
@@ -45,6 +49,26 @@ export class Instance<P = unknown> {
 
   at(x: number, y: number, z: number): this {
     this.record.position = { x, y, z };
+    return this;
+  }
+
+  rotate(axis: AxisLike, angleDegrees: number): this {
+    const a = toAxis(axis);
+    const rotQ = Quaternion.fromAxisAngle(a.direction, rad(angleDegrees));
+
+    const cur = this.record.quaternion;
+    const newQ = rotQ.multiply(new Quaternion(cur.x, cur.y, cur.z, cur.w));
+    this.record.quaternion = { x: newQ.x, y: newQ.y, z: newQ.z, w: newQ.w };
+
+    const p = this.record.position;
+    const offset = new Vector3d(p.x - a.origin.x, p.y - a.origin.y, p.z - a.origin.z);
+    const rotated = rotQ.rotateVector(offset);
+    this.record.position = {
+      x: a.origin.x + rotated.x,
+      y: a.origin.y + rotated.y,
+      z: a.origin.z + rotated.z,
+    };
+
     return this;
   }
 }
