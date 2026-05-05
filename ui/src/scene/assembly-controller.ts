@@ -39,6 +39,13 @@ export class AssemblyController {
    */
   private hoveredInstanceId: string | null = null;
   /**
+   * Connectors that should stay visible regardless of hover state — set
+   * by {@link highlightMate} so the two connectors participating in the
+   * selected joint remain visible after the cursor leaves their instances.
+   * Cleared by {@link clearHighlight}.
+   */
+  private mateRevealedConnectors = new Set<Object3D>();
+  /**
    * Set on pointerup to the instanceId whose drag just ended (or `null`
    * once consumed / between gestures). Read via {@link consumeRecentDrag}:
    * if non-null, the viewer's mouseup-as-click handler suppresses the
@@ -175,16 +182,32 @@ export class AssemblyController {
    */
   setHoveredInstance(instanceId: string | null): void {
     if (this.hoveredInstanceId === instanceId) return;
-    if (this.hoveredInstanceId) {
-      const prev = this.instances.get(this.hoveredInstanceId);
-      if (prev) setConnectorsVisible(prev.group, false);
-    }
+    const prevId = this.hoveredInstanceId;
     this.hoveredInstanceId = instanceId;
+    if (prevId) {
+      const prev = this.instances.get(prevId);
+      if (prev) this.applyConnectorVisibility(prev);
+    }
     if (instanceId) {
       const next = this.instances.get(instanceId);
-      if (next) setConnectorsVisible(next.group, true);
+      if (next) this.applyConnectorVisibility(next);
     }
     this.requestRender();
+  }
+
+  /**
+   * Walk an instance group's connectors and set visibility from the union
+   * of two sources: hover (the whole instance is hovered) and pinning (a
+   * mate selection has flagged a specific connector). Single source of
+   * truth so hover transitions don't accidentally hide pinned connectors
+   * and pin clearing doesn't hide hovered ones.
+   */
+  private applyConnectorVisibility(state: InstanceState): void {
+    const isHovered = this.hoveredInstanceId === state.data.instanceId;
+    state.group.traverse((child) => {
+      if (!child.userData?.isConnector) return;
+      child.visible = isHovered || this.mateRevealedConnectors.has(child);
+    });
   }
 
   /**
@@ -584,15 +607,54 @@ export class AssemblyController {
     this.clearHighlight();
     const state = this.instances.get(instanceId);
     if (!state) return;
-    state.group.traverse((child) => {
-      const mat = (child as any).material;
-      if (!mat || !mat.color) return;
-      if (child.userData.assemblyOriginalColor === undefined) {
-        child.userData.assemblyOriginalColor = mat.color.getHex();
-      }
-      mat.color.setHex(color);
-    });
+    this.tintInstance(state, color);
     this.requestRender();
+  }
+
+  /**
+   * Highlight both instances participating in a mate and pin the two
+   * connectors involved so they remain visible. Pairs with the joints
+   * panel's row-click interaction.
+   */
+  highlightMate(mate: SerializedAssemblyMate, color: number): void {
+    this.clearHighlight();
+    const a = this.instances.get(mate.connectorA.instanceId);
+    const b = this.instances.get(mate.connectorB.instanceId);
+    if (a) {
+      this.tintInstance(a, color);
+      this.pinConnectorOnInstance(a, mate.connectorA.connectorId);
+    }
+    if (b) {
+      this.tintInstance(b, color);
+      this.pinConnectorOnInstance(b, mate.connectorB.connectorId);
+    }
+    this.requestRender();
+  }
+
+  private tintInstance(state: InstanceState, color: number): void {
+    // Walk manually so we can prune the connector subtrees — their
+    // X/Y/Z axis materials must keep their original red/green/blue.
+    const walk = (obj: Object3D) => {
+      if (obj.userData?.isConnector) return;
+      const mat = (obj as any).material;
+      if (mat && mat.color) {
+        if (obj.userData.assemblyOriginalColor === undefined) {
+          obj.userData.assemblyOriginalColor = mat.color.getHex();
+        }
+        mat.color.setHex(color);
+      }
+      for (const child of obj.children) walk(child);
+    };
+    walk(state.group);
+  }
+
+  private pinConnectorOnInstance(state: InstanceState, connectorId: string): void {
+    state.group.traverse((child) => {
+      if (child.userData?.isConnector && child.userData?.connectorId === connectorId) {
+        this.mateRevealedConnectors.add(child);
+      }
+    });
+    this.applyConnectorVisibility(state);
   }
 
   clearHighlight(): void {
@@ -605,6 +667,12 @@ export class AssemblyController {
         delete child.userData.assemblyOriginalColor;
       }
     });
+    if (this.mateRevealedConnectors.size > 0) {
+      this.mateRevealedConnectors.clear();
+      for (const state of this.instances.values()) {
+        this.applyConnectorVisibility(state);
+      }
+    }
     this.requestRender();
   }
 

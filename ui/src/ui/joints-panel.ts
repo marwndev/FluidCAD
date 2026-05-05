@@ -31,6 +31,7 @@ export class JointsPanel {
   private expanded = true;
   private activeDropdown: HTMLDivElement | null = null;
   private dropdownCleanup: (() => void) | null = null;
+  private selectedId: string | null = null;
 
   private onSelectMate: (mateId: string) => void;
   private onShowInSource: (mateId: string) => void;
@@ -83,6 +84,14 @@ export class JointsPanel {
     this.renderRows();
   }
 
+  setSelected(mateId: string | null): void {
+    if (this.selectedId === mateId) {
+      return;
+    }
+    this.selectedId = mateId;
+    this.renderRows();
+  }
+
   dispose(): void {
     this.closeDropdown();
     this.header.remove();
@@ -104,13 +113,17 @@ export class JointsPanel {
       const aName = this.instancesById.get(mate.connectorA.instanceId)?.name ?? '?';
       const bName = this.instancesById.get(mate.connectorB.instanceId)?.name ?? '?';
       const dotColor = STATUS_COLORS[mate.status];
+      const selected = this.selectedId === mate.mateId;
+      const selectedClass = selected ? ' bg-primary/10' : '';
       html += `
-        <div class="group flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-base-content/[0.06] text-base-content/80" data-mate-id="${mate.mateId}">
-          <span class="shrink-0 inline-block w-2 h-2 rounded-full ${dotColor}"></span>
+        <div class="group flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-base-content/[0.06] text-base-content/80${selectedClass}" data-mate-id="${mate.mateId}">
           <div class="flex-1 min-w-0 flex flex-col leading-tight">
-            <span class="text-sm">${escapeHtml(mate.type)}</span>
-            <span class="text-[10px] text-base-content/50 truncate">${escapeHtml(aName)}</span>
-            <span class="text-[10px] text-base-content/50 truncate">${escapeHtml(bName)}</span>
+            <span class="flex items-center gap-2 text-sm">
+              <span class="shrink-0 inline-block w-2 h-2 rounded-full ${dotColor}"></span>
+              ${escapeHtml(mate.type)}
+            </span>
+            <span class="pl-4 text-[10px] text-base-content/50 truncate">${escapeHtml(aName)}</span>
+            <span class="pl-4 text-[10px] text-base-content/50 truncate">${escapeHtml(bName)}</span>
           </div>
           <button class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-square btn-xs text-base-content/40 hover:text-base-content/70 shrink-0" data-dots="${mate.mateId}">${DOTS_SVG}</button>
         </div>
@@ -122,7 +135,10 @@ export class JointsPanel {
       row.addEventListener('click', (e) => {
         const target = e.target as HTMLElement;
         if (target.closest('[data-dots]')) return;
-        this.onSelectMate(row.dataset.mateId!);
+        const id = row.dataset.mateId!;
+        this.selectedId = id;
+        this.renderRows();
+        this.onSelectMate(id);
       });
     });
 

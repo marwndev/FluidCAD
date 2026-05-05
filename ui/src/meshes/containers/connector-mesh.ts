@@ -79,6 +79,7 @@ export class ConnectorMesh extends Group {
 
     this.userData.isMetaShape = true;
     this.userData.isConnector = true;
+    this.userData.connectorId = sceneObject.id;
 
     const origin = toVec3(data.origin);
     const xDir = toVec3(data.xDirection).normalize();

@@ -141,9 +141,16 @@ function buildPartRail(): LeftRail {
 
 function buildAssemblyRail(): LeftRail {
   const visibility = new Map<string, boolean>();
+  // Forward declared so the parts-panel onSelect callback can clear the
+  // joints-panel selection (and vice versa) — they're mutually exclusive
+  // selection states from the user's perspective.
+  let joints!: JointsPanel;
   const parts = new PartsPanel(
     container,
-    (id) => viewer.highlightInstance(id),
+    (id) => {
+      joints.setSelected(null);
+      viewer.highlightInstance(id);
+    },
     (id, visible) => {
       visibility.set(id, visible);
       viewer.setInstanceVisibility(id, visible);
@@ -174,18 +181,13 @@ function buildAssemblyRail(): LeftRail {
       console.warn('Delete instance not implemented yet');
     },
   );
-  const joints = new JointsPanel(
+  joints = new JointsPanel(
     parts.getJointsHost(),
     (mateId) => {
+      parts.setSelected(null);
       const mate = findMate(mateId);
       if (!mate) return;
-      // Phase 06: highlight both instances participating in the mate. A
-      // future polish lights only the two connector triads — the hooks are
-      // there in viewer.highlightInstance, but per-connector highlighting
-      // needs new viewer machinery (tracked in phase 06 follow-ups).
-      viewer.highlightInstance(mate.connectorA.instanceId);
-      // Highlighting two instances means the second call clears the first;
-      // for now favour the A-side. Connector-pair highlight is a follow-up.
+      viewer.highlightMate(mate);
     },
     (id) => {
       const mate = findMate(id);
@@ -387,7 +389,15 @@ viewer.setSelectionHandler((shapeId, sub, instanceId) => {
       viewer.clearHighlight();
     }
   } else {
+    // Click in empty 3D space — clear face/edge selection AND the
+    // parts/joints panel-driven instance tint so the user has a clean
+    // way to deselect a row.
     viewer.clearHighlight();
+    viewer.clearInstanceHighlight();
+    if (currentRail?.kind === 'assembly') {
+      currentRail.parts.setSelected(null);
+      currentRail.joints.setSelected(null);
+    }
   }
   shapePropertiesModal.setSelectedShape(shapeId);
   if (shapeId !== null && sub !== null) {

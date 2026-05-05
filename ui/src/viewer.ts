@@ -2,7 +2,7 @@ import { Box3, BufferAttribute, BufferGeometry, Color, LineSegments, Mesh, MeshP
 import { FIT_PADDING, SceneContext } from './scene/scene-context';
 import { SceneModeManager } from './scene/scene-mode';
 import { buildSceneMesh } from './meshes/mesh-factory';
-import { SceneObjectPart, SceneObjectRender, SerializedAssembly, SubSelection } from './types';
+import { SceneObjectPart, SceneObjectRender, SerializedAssembly, SerializedAssemblyMate, SubSelection } from './types';
 import { AssemblyController, InstanceDragReleaseHandler, SolverUpdateHandler } from './scene/assembly-controller';
 import { SettingsPanel } from './ui/settings-panel';
 import { CentroidIndicator } from './scene/centroid-indicator';
@@ -437,6 +437,10 @@ export class Viewer {
 
   highlightInstance(instanceId: string): void {
     this.assemblyController?.highlightInstance(instanceId, themeColors.highlightColor.getHex());
+  }
+
+  highlightMate(mate: SerializedAssemblyMate): void {
+    this.assemblyController?.highlightMate(mate, themeColors.highlightColor.getHex());
   }
 
   clearInstanceHighlight(): void {
@@ -1115,6 +1119,17 @@ export class Viewer {
   /** Rebuild the scene mesh using the current scene objects (no mode transitions or auto-fit). */
   rebuildSceneMesh(): void {
     if (!this.sceneObjects) {
+      return;
+    }
+    // In assembly mode, the AssemblyController is the source of truth for
+    // geometry — its instance groups already render every referenced part
+    // at the right pose with connectors hidden. Building a separate
+    // `compiledMesh` here would draw each part again at world origin with
+    // its connectors visible (they're not inside an instance group, so the
+    // controller's `setConnectorsVisible(false)` never sees them) and the
+    // stray mesh would only get cleared on the next assembly update — i.e.
+    // the user has to edit the file before the rogue connectors disappear.
+    if (this.assemblyController?.getContainer().parent) {
       return;
     }
     this.removeCompiledMesh();
