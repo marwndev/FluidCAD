@@ -132,7 +132,13 @@ export class AssemblyController {
       // and force a rebuild if anything in it was re-built this render.
       const subtreeFresh = this.partSubtreeWasRebuilt(inst.partId);
       const isDragging = this.dragState?.instanceId === inst.instanceId;
-      if (existing && (!subtreeFresh || isDragging)) {
+      // partId-changed guard: instance ids are counter-based, so commenting
+      // out an earlier insert() shifts a later instance onto an id whose
+      // existing group was built from a different part. Without this check
+      // the fast path below would just patch pose/data and leave the wrong
+      // mesh on screen.
+      const partChanged = existing !== undefined && existing.data.partId !== inst.partId;
+      if (existing && !partChanged && (!subtreeFresh || isDragging)) {
         existing.data = inst;
         existing.connectors = connectors;
         existing.group.userData.grounded = inst.grounded;
