@@ -80,63 +80,63 @@ describe('updateInsertChain', () => {
     expect(result.newCode).toBe(code);
   });
 
-  it('appends .at(x, y, z) to a bare insert', async () => {
+  it('appends .translate(x, y, z) to a bare insert', async () => {
     const code = `insert(p);\n`;
-    const result = await updateInsertChain(code, 1, { at: [1, 2, 3] });
-    expect(result.newCode).toBe(`insert(p).at(1, 2, 3);\n`);
+    const result = await updateInsertChain(code, 1, { translate: [1, 2, 3] });
+    expect(result.newCode).toBe(`insert(p).translate(1, 2, 3);\n`);
   });
 
-  it('replaces an existing .at(...) in place', async () => {
-    const code = `insert(p).at(1, 2, 3);\n`;
-    const result = await updateInsertChain(code, 1, { at: [4, 5, 6] });
-    expect(result.newCode).toBe(`insert(p).at(4, 5, 6);\n`);
+  it('replaces an existing .translate(...) in place', async () => {
+    const code = `insert(p).translate(1, 2, 3);\n`;
+    const result = await updateInsertChain(code, 1, { translate: [4, 5, 6] });
+    expect(result.newCode).toBe(`insert(p).translate(4, 5, 6);\n`);
   });
 
-  it('drops .at() when value is null', async () => {
-    const code = `insert(p).at(1, 2, 3);\n`;
-    const result = await updateInsertChain(code, 1, { at: null });
+  it('drops .translate() when value is null', async () => {
+    const code = `insert(p).translate(1, 2, 3);\n`;
+    const result = await updateInsertChain(code, 1, { translate: null });
     expect(result.newCode).toBe(`insert(p);\n`);
   });
 
-  it('drops .at() when value is within epsilon of the origin', async () => {
-    const code = `insert(p).at(1, 2, 3);\n`;
-    const result = await updateInsertChain(code, 1, { at: [0, 0, 0] });
+  it('drops .translate() when value is within epsilon of the origin', async () => {
+    const code = `insert(p).translate(1, 2, 3);\n`;
+    const result = await updateInsertChain(code, 1, { translate: [0, 0, 0] });
     expect(result.newCode).toBe(`insert(p);\n`);
   });
 
-  it('does not append .at(0, 0, 0) on a never-moved insert', async () => {
+  it('does not append .translate(0, 0, 0) on a never-moved insert', async () => {
     const code = `insert(p);\n`;
-    const result = await updateInsertChain(code, 1, { at: [0, 0, 0] });
+    const result = await updateInsertChain(code, 1, { translate: [0, 0, 0] });
     expect(result.newCode).toBe(code);
   });
 
   it('rounds noisy floats to six decimal places', async () => {
     const code = `insert(p);\n`;
     const result = await updateInsertChain(code, 1, {
-      at: [1.0000000001, 2.123456789, -3.5],
+      translate: [1.0000000001, 2.123456789, -3.5],
     });
-    expect(result.newCode).toBe(`insert(p).at(1, 2.123457, -3.5);\n`);
+    expect(result.newCode).toBe(`insert(p).translate(1, 2.123457, -3.5);\n`);
   });
 
-  it('preserves .grounded() and .name() while updating .at()', async () => {
+  it('preserves .grounded() and .name() while updating .translate()', async () => {
     const code = `insert(p).name('foo').grounded();\n`;
-    const result = await updateInsertChain(code, 1, { at: [1, 2, 3] });
-    expect(result.newCode).toBe(`insert(p).name('foo').grounded().at(1, 2, 3);\n`);
+    const result = await updateInsertChain(code, 1, { translate: [1, 2, 3] });
+    expect(result.newCode).toBe(`insert(p).name('foo').grounded().translate(1, 2, 3);\n`);
   });
 
-  it('combined name + at + ground in one call', async () => {
+  it('combined name + translate + ground in one call', async () => {
     const code = `insert(p);\n`;
     const result = await updateInsertChain(code, 1, {
       name: 'foo',
-      at: [1, 2, 3],
+      translate: [1, 2, 3],
       ground: true,
     });
-    expect(result.newCode).toBe(`insert(p).name("foo").at(1, 2, 3).grounded();\n`);
+    expect(result.newCode).toBe(`insert(p).name("foo").translate(1, 2, 3).grounded();\n`);
   });
 
-  it('idempotent: re-applying the same .at() is a no-op', async () => {
-    const code = `insert(p).at(1, 2, 3);\n`;
-    const result = await updateInsertChain(code, 1, { at: [1, 2, 3] });
+  it('idempotent: re-applying the same .translate() is a no-op', async () => {
+    const code = `insert(p).translate(1, 2, 3);\n`;
+    const result = await updateInsertChain(code, 1, { translate: [1, 2, 3] });
     expect(result.newCode).toBe(code);
   });
 });

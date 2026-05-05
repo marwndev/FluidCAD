@@ -20,7 +20,7 @@ function insert<P extends IPart>(part: P): Instance<P> {
   // already used by an earlier one (e.g. new `right` landing on old `front`'s
   // `line:col`), and the UI controller's instance map keyed off id would then
   // reuse the wrong part's mesh. `sourceLocation` is preserved separately on
-  // the record for drag-release `.at(...)` writeback.
+  // the record for drag-release `.translate(...)` writeback.
   const instanceId = `inst-${scene.getInstances().length}`;
 
   const record: AssemblyInstance = {

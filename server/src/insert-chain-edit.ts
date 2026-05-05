@@ -146,15 +146,15 @@ export type InsertChainEdit = {
   /** Drop `.name(...)` if its value matches this default (revert-to-default). */
   defaultName?: string;
   /**
-   * Triple to set as `.at(x, y, z)`, `null` to drop, `undefined` to leave alone.
-   * A triple within `AT_ORIGIN_EPSILON` of the origin is treated like `null`
+   * Triple to set as `.translate(x, y, z)`, `null` to drop, `undefined` to leave alone.
+   * A triple within `TRANSLATE_ORIGIN_EPSILON` of the origin is treated like `null`
    * — the chained call is stripped so a never-moved insert stays bare.
    */
-  at?: [number, number, number] | null;
+  translate?: [number, number, number] | null;
 };
 
-const AT_ORIGIN_EPSILON = 1e-6;
-const AT_DECIMALS = 6;
+const TRANSLATE_ORIGIN_EPSILON = 1e-6;
+const TRANSLATE_DECIMALS = 6;
 
 export type InsertChainEditResult = { newCode: string };
 
@@ -194,14 +194,14 @@ function applyEdits(code: string, chain: TSNode[], edit: InsertChainEdit): strin
   const sourceLine = chain[0].startPosition.row + 1;
 
   // Operate from end of file to start so later splices don't invalidate earlier indices.
-  // For the single-chain case this means: name first (it's later in chain), then at,
+  // For the single-chain case this means: name first (it's later in chain), then translate,
   // then ground. We rebuild the chain after each edit by re-parsing, to keep node
   // indices fresh.
   if (edit.name !== undefined) {
     working = applyName(working, chain, edit.name, edit.defaultName);
   }
-  if (edit.at !== undefined) {
-    working = applyAt(working, sourceLine, edit.at);
+  if (edit.translate !== undefined) {
+    working = applyTranslate(working, sourceLine, edit.translate);
   }
   if (edit.ground !== undefined) {
     working = applyGround(working, sourceLine, edit.ground);
@@ -234,44 +234,44 @@ function applyName(
   return appendChainCall(code, chain, `.name(${literal})`);
 }
 
-function applyAt(
+function applyTranslate(
   code: string,
   sourceLine: number,
   value: [number, number, number] | null,
 ): string {
   return reParseAndEdit(code, sourceLine, (chain) => {
-    const atCall = findMethodCall(chain, 'at');
+    const translateCall = findMethodCall(chain, 'translate');
     const isOrigin =
       value !== null &&
-      Math.abs(value[0]) < AT_ORIGIN_EPSILON &&
-      Math.abs(value[1]) < AT_ORIGIN_EPSILON &&
-      Math.abs(value[2]) < AT_ORIGIN_EPSILON;
+      Math.abs(value[0]) < TRANSLATE_ORIGIN_EPSILON &&
+      Math.abs(value[1]) < TRANSLATE_ORIGIN_EPSILON &&
+      Math.abs(value[2]) < TRANSLATE_ORIGIN_EPSILON;
 
     if (value === null || isOrigin) {
-      if (atCall) {
-        return removeChainCall(code, atCall);
+      if (translateCall) {
+        return removeChainCall(code, translateCall);
       }
       return null;
     }
 
-    const literal = formatAtArgs(value);
-    if (atCall) {
-      const args = atCall.childForFieldName('arguments');
+    const literal = formatTranslateArgs(value);
+    if (translateCall) {
+      const args = translateCall.childForFieldName('arguments');
       if (!args) return null;
       return spliceCode(code, args.startIndex + 1, args.endIndex - 1, literal);
     }
-    return appendChainCall(code, chain, `.at(${literal})`);
+    return appendChainCall(code, chain, `.translate(${literal})`);
   });
 }
 
-function formatAtArgs(value: [number, number, number]): string {
-  return value.map(formatAtNumber).join(', ');
+function formatTranslateArgs(value: [number, number, number]): string {
+  return value.map(formatTranslateNumber).join(', ');
 }
 
-function formatAtNumber(n: number): string {
+function formatTranslateNumber(n: number): string {
   // Round noisy float drag positions to a stable diff. `+x.toFixed(6)` strips
   // trailing zeros so `1.5` stays `1.5`, not `1.500000`.
-  return String(+n.toFixed(AT_DECIMALS));
+  return String(+n.toFixed(TRANSLATE_DECIMALS));
 }
 
 function applyGround(code: string, sourceLine: number, ground: boolean): string {

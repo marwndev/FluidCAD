@@ -57,19 +57,31 @@ describe("insert scope", () => {
       expect(() => mate("fastened", null as any, null as any)).toThrow(/connector/i);
     });
 
-    it(".at() writes record.position", () => {
+    it(".translate() writes record.position", () => {
       const inst = insert(p);
-      inst.at(1, 2, 3);
+      inst.translate(1, 2, 3);
       expect(inst.record.position).toEqual({ x: 1, y: 2, z: 3 });
     });
 
-    it("default position is the origin without .at()", () => {
+    it(".translate() defaults y and z to 0 when omitted", () => {
+      const inst = insert(p);
+      inst.translate(7);
+      expect(inst.record.position).toEqual({ x: 7, y: 0, z: 0 });
+    });
+
+    it(".translate() defaults z to 0 when only x and y are given", () => {
+      const inst = insert(p);
+      inst.translate(7, 8);
+      expect(inst.record.position).toEqual({ x: 7, y: 8, z: 0 });
+    });
+
+    it("default position is the origin without .translate()", () => {
       const inst = insert(p);
       expect(inst.record.position).toEqual({ x: 0, y: 0, z: 0 });
     });
 
-    it(".at() chains with .grounded() and .name() in any order", () => {
-      const inst = insert(p).at(5, 6, 7).grounded().name("foo");
+    it(".translate() chains with .grounded() and .name() in any order", () => {
+      const inst = insert(p).translate(5, 6, 7).grounded().name("foo");
       expect(inst.record.position).toEqual({ x: 5, y: 6, z: 7 });
       expect(inst.record.grounded).toBe(true);
       expect(inst.record.name).toBe("foo");

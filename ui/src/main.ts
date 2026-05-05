@@ -260,7 +260,7 @@ async function updateInsertChain(
     ground?: boolean;
     name?: string | null;
     defaultName?: string;
-    at?: [number, number, number] | null;
+    translate?: [number, number, number] | null;
   },
 ): Promise<void> {
   try {
@@ -326,7 +326,7 @@ viewer.setInstanceDragReleaseHandler((instanceId, position) => {
   const inst = findInstance(instanceId);
   if (!inst?.sourceLocation) return;
   // For mate-constrained ungrounded bodies, position is mate-derived and
-  // rotation is the meaningful drag dimension. Persisting `.at(...)`
+  // rotation is the meaningful drag dimension. Persisting `.translate(...)`
   // would write the post-solve position into the source while losing the
   // rotation entirely (`.orient()` doesn't exist yet), so on reload the
   // body would snap back to identity orientation at the persisted
@@ -337,7 +337,7 @@ viewer.setInstanceDragReleaseHandler((instanceId, position) => {
     return;
   }
   updateInsertChain(inst.sourceLocation, {
-    at: [position.x, position.y, position.z],
+    translate: [position.x, position.y, position.z],
   });
 });
 

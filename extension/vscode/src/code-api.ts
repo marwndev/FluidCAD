@@ -75,7 +75,7 @@ export type InsertChainEdit = {
   ground?: boolean;
   name?: string | null;
   defaultName?: string;
-  at?: [number, number, number] | null;
+  translate?: [number, number, number] | null;
 };
 
 export function updateInsertChain(

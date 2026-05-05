@@ -94,7 +94,7 @@ export class AssemblyController {
 
   /**
    * Diff incoming assembly data against current state. The source is the
-   * source of truth for poses (phase 03b: drag-release writes `.at(...)` back
+   * source of truth for poses (phase 03b: drag-release writes `.translate(...)` back
    * into the file), so existing instances are re-synced from the new
    * `inst.position` / `inst.quaternion`. The currently dragged instance is
    * skipped to avoid snapping it back mid-drag — the next render after

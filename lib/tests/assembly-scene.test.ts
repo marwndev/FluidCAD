@@ -68,12 +68,12 @@ describe("assembly scene", () => {
     expect(scene.getInstances()[0].position).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it("Instance has grounded(), name(), at(), and rotate(), but no orient() yet", () => {
+  it("Instance has grounded(), name(), translate(), and rotate(), but no orient() yet", () => {
     const { p } = startAssemblyWithPart();
     const inst = insert(p);
     expect(typeof inst.grounded).toBe("function");
     expect(typeof inst.name).toBe("function");
-    expect(typeof inst.at).toBe("function");
+    expect(typeof inst.translate).toBe("function");
     expect(typeof inst.rotate).toBe("function");
     expect("orient" in inst).toBe(false);
   });
@@ -110,17 +110,17 @@ describe("assembly scene", () => {
     expect(a.record.quaternion.w).toBeCloseTo(b.record.quaternion.w);
   });
 
-  it(".at then .rotate around world Z moves the position around the Z axis line", () => {
+  it(".translate then .rotate around world Z moves the position around the Z axis line", () => {
     const { p } = startAssemblyWithPart();
-    const inst = insert(p).at(5, 0, 0).rotate("z", 90);
+    const inst = insert(p).translate(5, 0, 0).rotate("z", 90);
     expect(inst.record.position.x).toBeCloseTo(0);
     expect(inst.record.position.y).toBeCloseTo(5);
     expect(inst.record.position.z).toBeCloseTo(0);
   });
 
-  it(".rotate then .at: rotate happens at origin, then .at overwrites position", () => {
+  it(".rotate then .translate: rotate happens at origin, then .translate overwrites position", () => {
     const { p } = startAssemblyWithPart();
-    const inst = insert(p).rotate("z", 90).at(5, 0, 0);
+    const inst = insert(p).rotate("z", 90).translate(5, 0, 0);
     expect(inst.record.position).toEqual({ x: 5, y: 0, z: 0 });
   });
 

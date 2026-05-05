@@ -47,7 +47,7 @@ export class Instance<P = unknown> {
     return this;
   }
 
-  at(x: number, y: number, z: number): this {
+  translate(x: number, y: number = 0, z: number = 0): this {
     this.record.position = { x, y, z };
     return this;
   }
