@@ -26,11 +26,20 @@
   max-width: 46rem;
 }
 
+/* Overlaid, the frame is a two-row grid whose height comes from what it
+   holds: one pad above the copy, the same pad between the copy and the
+   switcher, the same again below. The scene fills the whole frame regardless
+   — an absolutely positioned child resolves against the padding box. */
 @media (min-width: 1000px) {
   .frame {
-    display: block;
-    height: clamp(520px, 72vh, 780px);
-    padding-block: 0;
+    --hero-pad: clamp(2rem, 1.2rem + 2vh, 3.25rem);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(21rem, 32vw, 29rem);
+    grid-template-rows: auto auto;
+    row-gap: var(--hero-pad);
+    padding-block: var(--hero-pad);
+    padding-inline: 0 var(--fc-gutter);
+    min-height: clamp(420px, 56vh, 580px);
   }
 
   .viewportLayer {
@@ -39,19 +48,16 @@
     height: auto;
   }
 
-  /* In flow inside the frame, pushed right — it lands on the viewport
+  /* In flow inside the frame, in the right column — it lands on the viewport
      without taking the pointer away from the whole scene. */
   .copy {
+    grid-column: 2;
+    grid-row: 1;
     position: relative;
     z-index: var(--fc-z-raised);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    height: 100%;
-    width: clamp(21rem, 32vw, 29rem);
+    width: auto;
     max-width: none;
-    margin-left: auto;
-    padding-inline: 0 var(--fc-gutter);
+    padding-inline: 0;
   }
 }
 
@@ -163,13 +169,12 @@
 
 @media (min-width: 1000px) {
   .switcher {
-    position: absolute;
-    left: 0;
-    bottom: clamp(0.75rem, 1.5vw, 1.5rem);
-    /* Clear of the copy column, so the two never share a line. */
-    width: calc(100% - clamp(21rem, 32vw, 29rem) - var(--fc-gutter));
+    /* Left column, second row: clear of the copy, one pad below it. */
+    grid-column: 1;
+    grid-row: 2;
+    position: relative;
     z-index: var(--fc-z-raised);
-    padding-inline: calc(var(--fc-gutter) - 1rem) var(--fc-gutter);
+    padding-inline: calc(var(--fc-gutter) - 1rem) 0;
   }
 }
 

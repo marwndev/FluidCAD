@@ -11,9 +11,10 @@ import styles from './Hero.module.css';
 const OVERLAY_MIN_WIDTH = 1000;
 /** The feature rail's own footprint inside the frame: 1.5rem inset + 220px. */
 const RAIL_CLEARANCE_PX = 268;
-/** The rail's own top padding plus a row's leading, so row one sits on the
- *  headline's first line rather than the top of its line box. */
-const RAIL_ROW_LEAD_PX = 18;
+/** The rail's built-in 12px top padding plus the leading inside its first
+ *  row, so the row's text lands on the headline's cap height rather than the
+ *  top of its line box. */
+const RAIL_ROW_LEAD_PX = 31;
 
 export default function Hero() {
   const [activeId, setActiveId] = useState(HERO_MODELS[0].id);
@@ -49,11 +50,12 @@ export default function Hero() {
     const copyBox = copy.getBoundingClientRect();
     const switcherBox = switcher.getBoundingClientRect();
     const clearCentre = (RAIL_CLEARANCE_PX + (copyBox.left - frameBox.left)) / 2;
+    const bottomBand = Math.max(0, frameBox.bottom - switcherBox.top);
     setShift({
       x: Math.max(0, Math.round(frameBox.width / 2 - clearCentre)),
       // Half the band the switcher occupies: lifting by that much re-centres
       // the model in what is left of the frame.
-      y: Math.round(switcherBox.height / 2),
+      y: Math.round(bottomBand / 2),
     });
     // The rail starts on the headline's line and stops above the switcher, so
     // the two columns of chrome read as one band across the hero.
@@ -61,7 +63,7 @@ export default function Hero() {
     const titleTop = (title ?? copy).getBoundingClientRect().top - frameBox.top;
     setInset({
       top: Math.max(0, Math.round(titleTop - RAIL_ROW_LEAD_PX)),
-      bottom: Math.max(0, Math.round(frameBox.bottom - switcherBox.top)),
+      bottom: Math.round(bottomBand),
     });
   }, []);
 
