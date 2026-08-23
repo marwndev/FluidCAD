@@ -154,7 +154,11 @@ export default function Hero() {
             {/* The space between is dropped in block layout, and keeps the
                 two sentences apart for anything reading the text. */}
             <span className={styles.titleMouse}>Model with the mouse.</span>{' '}
-            <span className={styles.titleCode}>Control it with code.</span>
+            <span className={styles.titleCode}>
+              {/* The caret is drawn on the outer span so the clip that types
+                  this line doesn't cut it off along with the text. */}
+              <span className={styles.titleCodeText}>Control it with code.</span>
+            </span>
           </Heading>
           <p className={styles.sub}>
             FluidCAD is hybrid CAD. Sketch, extrude, fillet and the rest by clicking, then drop

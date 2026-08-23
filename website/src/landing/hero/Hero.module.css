@@ -77,7 +77,22 @@
      is stepped back this far — at 0.827 both measure 10.08em and the block is
      flush on both sides. Read as one size regardless. */
   --title-code-scale: 0.827;
+  --title-code-tracking: -0.02em;
   --title-leading: 1.06;
+  /* The entrance, in one place. The serif line is drawn, and only once it has
+     landed does the caret arrive and start typing the mono line: the headline
+     performs the two halves of the workflow in the order the page describes
+     them. Nothing here waits on JavaScript. */
+  --title-draw-ms: 700ms;
+  --title-resolve-ms: 880ms;
+  --title-caret-at: 780ms;
+  --title-type-at: 900ms;
+  --title-type-ms: 880ms;
+  /* 120ms to arrive, the 880ms of typing, two 240ms blinks, 480ms to leave. */
+  --title-caret-ms: 2440ms;
+  /* Quart, not the page's usual expo: expo spends most of its travel in the
+     first fifth, which is over before the eye has followed it. */
+  --title-draw-ease: cubic-bezier(0.25, 1, 0.5, 1);
   margin: 0 0 1.1rem;
   /* Set from the column, not the viewport: both lines are 10.08em wide by
      construction, so 100cqw / 10.08 is the size at which they fill it exactly.
@@ -86,12 +101,15 @@
   font-size: clamp(1.7rem, 9.8cqw, 3.25rem);
   line-height: var(--title-leading);
   color: var(--fc-ink);
-  animation: rise 620ms var(--fc-ease) both;
 }
 
 .titleMouse,
 .titleCode {
   display: block;
+  /* Each box shrinks to its own line, so the sweep and the type reveal
+     measure against the text rather than the column around it. The line
+     lengths are unchanged; only the boxes stop overhanging them. */
+  width: fit-content;
 }
 
 .titleMouse {
@@ -101,9 +119,15 @@
      same nominal weight, and the pair has to hold the same colour. */
   font-weight: 560;
   letter-spacing: -0.018em;
+  /* Two motions, deliberately out of step. The stroke crosses the line and
+     finishes; the focus keeps resolving for another fifth of a second after
+     it, so the line settles rather than stopping. */
+  animation: draw var(--title-draw-ms) var(--title-draw-ease) both,
+    resolve var(--title-resolve-ms) var(--title-draw-ease) both;
 }
 
 .titleCode {
+  position: relative;
   font-family: var(--fc-font-mono);
   font-weight: 500;
   font-size: calc(1em * var(--title-code-scale));
@@ -111,7 +135,39 @@
      one above it. Left unitless it would take the leading off its own
      smaller size and close the gap. */
   line-height: calc(var(--title-leading) / var(--title-code-scale));
-  letter-spacing: -0.02em;
+  letter-spacing: var(--title-code-tracking);
+  /* One character cell: the mono advance plus the tracking that follows it.
+     Twenty-one of these is the line exactly, which is what lets the reveal
+     and the caret land on character boundaries instead of near them. */
+  --title-code-cell: calc(1ch + var(--title-code-tracking));
+}
+
+.titleCodeText {
+  display: block;
+  animation: type var(--title-type-ms) steps(21, jump-start) var(--title-type-at)
+    both;
+}
+
+/* The caret. Solid while characters are arriving, the way a terminal holds
+   it, then two blinks and gone: the line is left clean, and no part of the
+   hero is still moving five seconds in. Blue because that is what this
+   palette uses for a thing that is running. */
+.titleCode::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  /* The cell, not a tick under the text. Chivo Mono's box runs 0.937em above
+     the baseline and 0.241em below it, and this line's leading leaves 0.052em
+     of it at each end, so those three numbers place a caret that fills the
+     character height exactly the way a terminal fills it. */
+  top: 0.052em;
+  width: var(--title-code-cell);
+  height: 1.178em;
+  background: var(--fc-live);
+  opacity: 0;
+  animation: caretRide var(--title-type-ms) steps(21, jump-start)
+      var(--title-type-at) forwards,
+    caretShow var(--title-caret-ms) linear var(--title-caret-at) forwards;
 }
 
 .sub {
@@ -121,7 +177,10 @@
   line-height: 1.55;
   color: var(--fc-ink-muted);
   text-wrap: pretty;
-  animation: rise 620ms var(--fc-ease) 80ms both;
+  /* Under the headline's performance, not after it: the sub-head and the
+     buttons settle while the serif is still being drawn, so nobody has to
+     wait out the choreography to click Get started. */
+  animation: rise 620ms var(--fc-ease) 220ms both;
 }
 
 /* Kept off the line break: split at its hyphen, "B-Rep" reads as two words. */
@@ -134,7 +193,7 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 1.75rem;
-  animation: rise 620ms var(--fc-ease) 160ms both;
+  animation: rise 620ms var(--fc-ease) 340ms both;
 }
 
 .secondary svg {
@@ -307,10 +366,106 @@
   }
 }
 
+/* Drawn, not faded. A soft-edged mask crosses the line left to right while
+   the ink resolves out of a blur, so the serif arrives as one continuous
+   stroke: the hand, moving.
+
+   The mask is declared inside the keyframes and nowhere else, so an element
+   that never animates is simply an unmasked, whole line. That is what makes
+   the reveal safe with animation switched off, and in anything that renders
+   the page without running it.
+
+   The geometry is what makes it read. A 235% mask travels 1.35 line-widths,
+   and clearing the line takes 1.235 of them, so almost none of the duration
+   is spent after the stroke has already arrived. The 45%/55% stops put the
+   soft edge fully off the line at both ends: at rest the whole line sits
+   inside the opaque region, so nothing is left permanently faded. */
+@keyframes draw {
+  from {
+    mask-image: linear-gradient(90deg, #000 0 45%, transparent 55%);
+    mask-size: 235% 100%;
+    mask-position: 100% 0;
+  }
+  to {
+    mask-image: linear-gradient(90deg, #000 0 45%, transparent 55%);
+    mask-size: 235% 100%;
+    mask-position: 0% 0;
+  }
+}
+
+/* The ink coming into focus, on its own clock. */
+@keyframes resolve {
+  from {
+    filter: blur(4px);
+  }
+  to {
+    filter: blur(0);
+  }
+}
+
+/* Twenty-one steps for twenty-one characters. The box is the line's own
+   width, so each step uncovers exactly one cell. */
+@keyframes type {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes caretRide {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(21 * var(--title-code-cell)));
+  }
+}
+
+/* Arrive, hold solid through the typing the way a terminal does, blink twice
+   once the line is finished, then leave. The stops are those millisecond
+   beats read as percentages of --title-caret-ms. */
+@keyframes caretShow {
+  0% {
+    opacity: 0;
+  }
+  4.9%,
+  41% {
+    opacity: 1;
+  }
+  41.1%,
+  50.8% {
+    opacity: 0;
+  }
+  50.9%,
+  60.7% {
+    opacity: 1;
+  }
+  60.8%,
+  70.5% {
+    opacity: 0;
+  }
+  70.6%,
+  80.3% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Nothing is drawn, nothing is typed, and there is no caret to blink: every
+   line is simply present. The rest of the copy keeps its own fade. */
 @media (prefers-reduced-motion: reduce) {
-  .title,
+  .titleMouse,
+  .titleCodeText,
   .sub,
   .actions {
     animation: none;
+  }
+
+  .titleCode::after {
+    display: none;
   }
 }
