@@ -19,6 +19,8 @@ type Props = {
   withTimeline: boolean;
   /** Pixels to slide the model left, clear of whatever the page overlays. */
   viewShiftX: number;
+  /** Pixels to lift the model, clear of the band the page fades out. */
+  viewShiftY: number;
   className?: string;
 };
 
@@ -32,17 +34,17 @@ function connectionLooksCapable(): boolean {
   if (!connection) {
     return true;
   }
-  if (connection.saveData) {
-    return false;
-  }
-  return connection.effectiveType === undefined || connection.effectiveType === '4g';
+  // Only the explicit signals. `effectiveType` is a rolling RTT estimate that
+  // reads "3g" on plenty of fine connections, localhost included, so gating on
+  // "4g" would leave most visitors looking at a still.
+  return !connection.saveData && connection.effectiveType !== 'slow-2g' && connection.effectiveType !== '2g';
 }
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export default function HeroViewport({model, withTimeline, viewShiftX, className}: Props) {
+export default function HeroViewport({model, withTimeline, viewShiftX, viewShiftY, className}: Props) {
   const {siteConfig} = useDocusaurusContext();
   const {colorMode} = useColorMode();
   const {fluidcadViewerUrl} = siteConfig.customFields as {fluidcadViewerUrl: string};
@@ -55,8 +57,8 @@ export default function HeroViewport({model, withTimeline, viewShiftX, className
   const releasedRef = useRef(false);
   const modelRef = useRef(model);
   modelRef.current = model;
-  const shiftRef = useRef(viewShiftX);
-  shiftRef.current = viewShiftX;
+  const shiftRef = useRef({x: viewShiftX, y: viewShiftY});
+  shiftRef.current = {x: viewShiftX, y: viewShiftY};
 
   const [supported, setSupported] = useState<boolean | null>(null);
   const [booted, setBooted] = useState(false);
@@ -146,7 +148,7 @@ export default function HeroViewport({model, withTimeline, viewShiftX, className
       setPhase('live');
       // Re-assert the offset per scene: a new model brings a new fit, and an
       // assembly swaps the whole camera rig.
-      embed.setViewOffset(shiftRef.current, 0);
+      embed.setViewOffset(shiftRef.current.x, shiftRef.current.y);
       clearReplayTimer();
       if (modelRef.current.replay && !releasedRef.current && !prefersReducedMotion()) {
         replayTimer.current = setTimeout(() => {
@@ -197,9 +199,9 @@ export default function HeroViewport({model, withTimeline, viewShiftX, className
   // left by the same measurement so nothing lands on top of it.
   useEffect(() => {
     if (readyEpoch > 0) {
-      embedRef.current?.setViewOffset(viewShiftX, 0);
+      embedRef.current?.setViewOffset(viewShiftX, viewShiftY);
     }
-  }, [viewShiftX, readyEpoch, phase]);
+  }, [viewShiftX, viewShiftY, readyEpoch, phase]);
 
   // Hovering is reading: hold the build where it is. Grabbing the model is
   // taking over: stop the replay and hand the scene back whole.
@@ -228,7 +230,9 @@ export default function HeroViewport({model, withTimeline, viewShiftX, className
     <div
       ref={stageRef}
       className={`${styles.stage} ${className ?? ''}`}
-      style={{'--hero-shift': `${viewShiftX}px`} as React.CSSProperties}
+      style={
+        {'--hero-shift-x': `${viewShiftX}px`, '--hero-shift-y': `${viewShiftY}px`} as React.CSSProperties
+      }
       onPointerEnter={pause}
       onPointerLeave={resume}
       onPointerDown={release}>
@@ -253,6 +257,7 @@ export default function HeroViewport({model, withTimeline, viewShiftX, className
         fetchPriority="high"
         decoding="async"
       />
+      <div className={styles.fade} aria-hidden="true" />
     </div>
   );
 }

@@ -29,7 +29,7 @@
 @media (min-width: 1000px) {
   .frame {
     display: block;
-    height: clamp(480px, 66vh, 720px);
+    height: clamp(520px, 72vh, 780px);
     padding-block: 0;
   }
 
@@ -83,6 +83,11 @@
   gap: 0.75rem;
   margin-top: 1.75rem;
   animation: rise 620ms var(--fc-ease) 160ms both;
+}
+
+.secondary svg {
+  margin-right: 0.5rem;
+  color: var(--fc-ink-faint);
 }
 
 .primary,
@@ -144,22 +149,35 @@
   object-fit: contain;
 }
 
-/* ===== Model switcher ===== */
+/* ===== Model switcher =====
+   Overlaid, it sits inside the band where the scene fades into the page, so
+   the controls belong to the instrument instead of hanging under it. */
 
 .switcher {
+  order: 3;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
   gap: 0.5rem;
-  max-width: 1440px;
-  margin: clamp(1rem, 2vw, 1.5rem) auto 0;
   padding-inline: var(--fc-gutter);
+}
+
+@media (min-width: 1000px) {
+  .switcher {
+    position: absolute;
+    left: 0;
+    bottom: clamp(0.75rem, 1.5vw, 1.5rem);
+    /* Clear of the copy column, so the two never share a line. */
+    width: calc(100% - clamp(21rem, 32vw, 29rem) - var(--fc-gutter));
+    z-index: var(--fc-z-raised);
+    padding-inline: calc(var(--fc-gutter) - 1rem) var(--fc-gutter);
+  }
 }
 
 .chip {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.8rem 1rem 0.9rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem 0.75rem;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
@@ -185,12 +203,35 @@
   outline-offset: 2px;
 }
 
+/* A render of the part, not an icon: the button shows what it switches to. */
+.chipThumb {
+  flex: none;
+  width: 3.25rem;
+  height: 3.25rem;
+  object-fit: contain;
+  opacity: 0.85;
+  transition: opacity var(--fc-quick) var(--fc-ease);
+}
+
+.chip:hover .chipThumb,
+.chip[aria-pressed='true'] .chipThumb {
+  opacity: 1;
+}
+
+.chipText {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
 .chipLabel {
   font-size: var(--fc-step-0);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--fc-ink);
 }
+
 
 .chip[aria-pressed='true'] .chipLabel {
   color: var(--fc-live);

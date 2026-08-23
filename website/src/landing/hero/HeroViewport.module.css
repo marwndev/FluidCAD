@@ -30,7 +30,7 @@
   object-fit: contain;
   pointer-events: none;
   opacity: 1;
-  transform: translateX(calc(-1 * var(--hero-shift, 0px)));
+  transform: translate(calc(-1 * var(--hero-shift-x, 0px)), calc(-1 * var(--hero-shift-y, 0px)));
   transition: opacity var(--fc-settle) var(--fc-ease);
 }
 
@@ -38,38 +38,26 @@
   opacity: 0;
 }
 
-/* The readout: a status line, not a caption. Facts about what is on screen. */
-.readout {
+/* The scene has no bottom edge: it dissolves into the page ground, which is
+   the same colour, and the model switcher sits inside that band. */
+.fade {
   position: absolute;
-  left: var(--fc-gutter);
-  bottom: 0.75rem;
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  margin: 0;
-  max-width: calc(100% - var(--fc-gutter) * 2);
-  font-family: var(--fc-font-mono);
-  font-size: var(--fc-step--1);
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  color: var(--fc-ink-faint);
-  font-variant-numeric: tabular-nums;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 55%;
   pointer-events: none;
-}
-
-.state {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--fc-line-strong);
-  transform: translateY(-1px);
-  transition: background var(--fc-quick) var(--fc-ease);
-}
-
-.state[data-live] {
-  background: var(--fc-live);
-  box-shadow: 0 0 0 3px var(--fc-live-wash);
+  /* Eased rather than linear: a straight alpha ramp reads as a visible band
+     edge. Reaches the page ground at the very bottom of the frame, which is
+     below the switcher — the buttons sit inside the fade, not under it. */
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    color-mix(in oklab, var(--fc-bg) 22%, transparent) 34%,
+    color-mix(in oklab, var(--fc-bg) 58%, transparent) 58%,
+    color-mix(in oklab, var(--fc-bg) 88%, transparent) 80%,
+    var(--fc-bg) 100%
+  );
 }
 
 @media (prefers-reduced-motion: reduce) {
