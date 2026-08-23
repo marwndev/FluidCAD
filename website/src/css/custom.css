@@ -15,6 +15,9 @@
 
 @import '@fontsource-variable/chivo';
 @import '@fontsource-variable/chivo-mono';
+/* Italic only, and only the weight axis: the serif is used for one line of
+   one headline, so nothing else in the family is worth the bytes. */
+@import '@fontsource-variable/literata/wght-italic.css';
 
 :root {
   /* --- grounds --- */
@@ -39,9 +42,15 @@
   /* Gold is a graphic accent; text needs the darkened form (5.7:1). */
   --fc-picked-ink: oklch(52% 0.13 62);
 
-  /* --- type --- */
+  /* --- type ---
+     Three families, and each one means something. Sans is the page's voice.
+     Mono is what the app writes — code, filenames, anything the file holds.
+     The serif is italic-only and reserved for the hand: the half of the
+     workflow that is a mouse moving, set against the mono half. Using it
+     anywhere else spends the contrast for nothing. */
   --fc-font-sans: 'Chivo Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --fc-font-mono: 'Chivo Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fc-font-serif: 'Literata Variable', Georgia, 'Iowan Old Style', 'Times New Roman', serif;
 
   --fc-step--1: 0.8125rem;
   --fc-step-0: 1.0625rem;

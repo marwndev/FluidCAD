@@ -24,6 +24,8 @@
   order: 1;
   padding-inline: var(--fc-gutter);
   max-width: 46rem;
+  /* The headline measures itself against this column in both layouts. */
+  container-type: inline-size;
 }
 
 /* Overlaid, the frame is a two-row grid whose height comes from what it
@@ -63,14 +65,53 @@
 
 /* ===== Copy ===== */
 
+/* Two lines, two typefaces, one size. The headline says the product is two
+   halves of one workflow, so it is set that way: the mouse line in an italic
+   serif that keeps moving, the code line in the editor's own monospace. They
+   are siblings — same colour, same weight on the page, same measure — and
+   only their nature differs. */
+
 .title {
+  /* The mono line's size against the serif line's. Chivo Mono's fixed advance
+     runs wide, so the two 21-character lines only end together once the mono
+     is stepped back this far — at 0.827 both measure 10.08em and the block is
+     flush on both sides. Read as one size regardless. */
+  --title-code-scale: 0.827;
+  --title-leading: 1.06;
   margin: 0 0 1.1rem;
-  font-size: clamp(1.95rem, 1.35rem + 2.4vw, 3.25rem);
-  font-weight: 700;
-  line-height: 1.03;
-  letter-spacing: -0.03em;
+  /* Set from the column, not the viewport: both lines are 10.08em wide by
+     construction, so 100cqw / 10.08 is the size at which they fill it exactly.
+     A little under that leaves room for rounding. Sizing off vw instead let
+     the headline outgrow a 21rem column and break into four ragged lines. */
+  font-size: clamp(1.7rem, 9.8cqw, 3.25rem);
+  line-height: var(--title-leading);
   color: var(--fc-ink);
   animation: rise 620ms var(--fc-ease) both;
+}
+
+.titleMouse,
+.titleCode {
+  display: block;
+}
+
+.titleMouse {
+  font-family: var(--fc-font-serif);
+  font-style: italic;
+  /* 560 against the mono's 500: Literata sets lighter than Chivo Mono at the
+     same nominal weight, and the pair has to hold the same colour. */
+  font-weight: 560;
+  letter-spacing: -0.018em;
+}
+
+.titleCode {
+  font-family: var(--fc-font-mono);
+  font-weight: 500;
+  font-size: calc(1em * var(--title-code-scale));
+  /* Divided back out, so this line advances the same distance as the serif
+     one above it. Left unitless it would take the leading off its own
+     smaller size and close the gap. */
+  line-height: calc(var(--title-leading) / var(--title-code-scale));
+  letter-spacing: -0.02em;
 }
 
 .sub {
@@ -81,6 +122,11 @@
   color: var(--fc-ink-muted);
   text-wrap: pretty;
   animation: rise 620ms var(--fc-ease) 80ms both;
+}
+
+/* Kept off the line break: split at its hyphen, "B-Rep" reads as two words. */
+.unbroken {
+  white-space: nowrap;
 }
 
 .actions {

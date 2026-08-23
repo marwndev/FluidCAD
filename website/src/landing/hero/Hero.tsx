@@ -11,10 +11,39 @@ import styles from './Hero.module.css';
 const OVERLAY_MIN_WIDTH = 1000;
 /** The feature rail's own footprint inside the frame: 1.5rem inset + 220px. */
 const RAIL_CLEARANCE_PX = 268;
-/** The rail's built-in 12px top padding plus the leading inside its first
- *  row, so the row's text lands on the headline's cap height rather than the
- *  top of its line box. */
-const RAIL_ROW_LEAD_PX = 31;
+/** The rail's own chrome above its first row's caps: 12px of panel padding,
+ *  4px around the list, 6px around the row, and 5.6px of half-leading above
+ *  a 14px/20px row. Fixed, because the rail's type doesn't scale with the
+ *  page. Measured with the timeline at rest — it scrolls its own rows once
+ *  the replay is under way. */
+const RAIL_ROW_CAP_PX = 28;
+
+let metricsCanvas: CanvasRenderingContext2D | null = null;
+
+/**
+ * How far a line's caps sit below the top of its line box.
+ *
+ * The rail docks to the headline's first line, not to its box, and the two
+ * are not the same distance apart at every size: that line is set in an
+ * italic serif whose ascenders overshoot its caps, and it resizes with its
+ * column. Reading the face's own metrics keeps the dock true at any size, and
+ * through a change of typeface — so this must be given the line itself, not
+ * the heading that holds it.
+ */
+function capInset(line: HTMLElement): number {
+  metricsCanvas ??= document.createElement('canvas').getContext('2d');
+  if (!metricsCanvas) {
+    return 0;
+  }
+  const style = getComputedStyle(line);
+  const size = parseFloat(style.fontSize);
+  const leading = parseFloat(style.lineHeight);
+  metricsCanvas.font = `${style.fontStyle} ${style.fontWeight} ${size}px ${style.fontFamily}`;
+  const m = metricsCanvas.measureText('M');
+  const halfLeading =
+    (leading - (m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)) / 2;
+  return halfLeading + m.fontBoundingBoxAscent - m.actualBoundingBoxAscent;
+}
 
 export default function Hero() {
   const [activeId, setActiveId] = useState(HERO_MODELS[0].id);
@@ -59,10 +88,17 @@ export default function Hero() {
     });
     // The rail starts on the headline's line and stops above the switcher, so
     // the two columns of chrome read as one band across the hero.
-    const title = copy.querySelector('h1');
-    const titleTop = (title ?? copy).getBoundingClientRect().top - frameBox.top;
+    //
+    // The headline's own rect is no good here: it rises into place on load,
+    // and a rect taken mid-animation reads up to 14px low, which put the rail
+    // wherever the measurement happened to land. The column doesn't move, and
+    // the headline sits flush at its top, so the column gives the resting top
+    // of the line box; the face's metrics give the caps inside it.
+    const firstLine = copy.querySelector('h1')?.firstElementChild as HTMLElement | null;
+    const titleTop = copyBox.top - frameBox.top;
+    const titleCap = firstLine ? capInset(firstLine) : 0;
     setInset({
-      top: Math.max(0, Math.round(titleTop - RAIL_ROW_LEAD_PX)),
+      top: Math.max(0, Math.round(titleTop + titleCap - RAIL_ROW_CAP_PX)),
       bottom: Math.round(bottomBand),
     });
   }, []);
@@ -81,7 +117,15 @@ export default function Hero() {
         observer.observe(el);
       }
     }
+    // The dock is read off the headline's own face, so it is only right once
+    // that face has arrived — until then the fallback's metrics are showing,
+    // and the serif's are far enough from Georgia's to see. `loadingdone`
+    // rather than `fonts.ready`: the headline's face is requested by its own
+    // first paint, which can land after ready has already resolved.
+    const remeasure = () => measure(wide.matches);
+    document.fonts?.addEventListener('loadingdone', remeasure);
     return () => {
+      document.fonts?.removeEventListener('loadingdone', remeasure);
       wide.removeEventListener('change', sync);
       observer.disconnect();
     };
@@ -104,15 +148,18 @@ export default function Hero() {
         </BrowserOnly>
 
         <div ref={copyRef} className={styles.copy}>
+          {/* Each line is set in the thing it names: the mouse half in the
+              italic serif, the code half in the same mono the editor uses. */}
           <Heading as="h1" className={styles.title}>
-            Model with the mouse.
-            <br />
-            Control it with code.
+            {/* The space between is dropped in block layout, and keeps the
+                two sentences apart for anything reading the text. */}
+            <span className={styles.titleMouse}>Model with the mouse.</span>{' '}
+            <span className={styles.titleCode}>Control it with code.</span>
           </Heading>
           <p className={styles.sub}>
             FluidCAD is hybrid CAD. Sketch, extrude, fillet and the rest by clicking, then drop
-            into JavaScript for what a dialog cannot say. One file, on the OpenCascade B-Rep
-            kernel.
+            into JavaScript for what a dialog cannot say. One file, on the OpenCascade{' '}
+            <span className={styles.unbroken}>B-Rep</span> kernel.
           </p>
           <div className={styles.actions}>
             <Link className={styles.primary} to="/docs/getting-started">

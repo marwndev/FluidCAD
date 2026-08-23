@@ -24,6 +24,7 @@
     "@docusaurus/preset-classic": "3.10.0",
     "@fontsource-variable/chivo": "^5.3.0",
     "@fontsource-variable/chivo-mono": "^5.3.0",
+    "@fontsource-variable/literata": "^5.3.0",
     "@mdx-js/react": "^3.0.0",
     "@tabler/icons-react": "^3.41.1",
     "clsx": "^2.0.0",
