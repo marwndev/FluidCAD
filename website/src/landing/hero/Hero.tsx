@@ -7,8 +7,17 @@ import {HERO_MODELS, type HeroModel} from './models';
 import HeroViewport from './HeroViewport';
 import styles from './Hero.module.css';
 
-/** Width the overlaid layout needs before the copy can sit on the viewport. */
-const OVERLAY_MIN_WIDTH = 1000;
+/**
+ * Width the overlaid layout needs before the copy can sit on the viewport.
+ *
+ * Measured, not chosen. Below this the copy column is narrow enough that the
+ * switcher's three buttons no longer fit across the room left of it and wrap
+ * to a second row; that taller frame is what the viewer fits the model into,
+ * so the model grows and lands on the copy it is supposed to sit clear of.
+ * Under the threshold the stacked layout gives the scene the whole width and
+ * the copy its own line, which is the better composition anyway.
+ */
+const OVERLAY_MIN_WIDTH = 1240;
 /** The feature rail's own footprint inside the frame: 1.5rem inset + 220px. */
 const RAIL_CLEARANCE_PX = 268;
 /** The rail's own chrome above its first row's caps: 12px of panel padding,

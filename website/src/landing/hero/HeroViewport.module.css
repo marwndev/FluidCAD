@@ -39,24 +39,40 @@
 }
 
 /* The scene has no bottom edge: it dissolves into the page ground, which is
-   the same colour, and the model switcher sits inside that band. */
+   the same colour, and the model switcher sits inside that band — still on
+   the drafting surface, with the grid running under the buttons.
+
+   Two lengths place it, both measured up from the scene's bottom edge:
+
+     --hero-foot   the room the page leaves below the switcher. The buttons
+                   end exactly this far up, whatever the headline above them
+                   does to the row heights, so it is the only anchor the fade
+                   needs to find them. Unset in the stacked layout, where the
+                   switcher sits under the scene rather than inside it.
+     --fade-rise   how far up the scene the dissolve reaches.
+
+   The ramp is still eased rather than linear — a straight alpha ramp reads as
+   a visible band edge — but it now spends its last third under the buttons
+   instead of through them: the scene is a fifth present at their bottom rule
+   and only reaches the page ground below it. The final stop lands short of
+   the scene's own edge, so the clip has nothing left to cut. */
 .fade {
+  --fade-rise: clamp(11rem, 34vh, 20rem);
+  --fade-land: calc(var(--hero-foot, 0px) * 0.42);
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: 55%;
+  height: var(--fade-rise);
   pointer-events: none;
-  /* Eased rather than linear: a straight alpha ramp reads as a visible band
-     edge. Reaches the page ground at the very bottom of the frame, which is
-     below the switcher — the buttons sit inside the fade, not under it. */
   background: linear-gradient(
     to bottom,
     transparent 0%,
-    color-mix(in oklab, var(--fc-bg) 22%, transparent) 34%,
-    color-mix(in oklab, var(--fc-bg) 58%, transparent) 58%,
-    color-mix(in oklab, var(--fc-bg) 88%, transparent) 80%,
-    var(--fc-bg) 100%
+    color-mix(in oklab, var(--fc-bg) 12%, transparent) 28%,
+    color-mix(in oklab, var(--fc-bg) 36%, transparent) 50%,
+    color-mix(in oklab, var(--fc-bg) 64%, transparent) 69%,
+    color-mix(in oklab, var(--fc-bg) 87%, transparent) 85%,
+    var(--fc-bg) calc(100% - var(--fade-land))
   );
 }
 

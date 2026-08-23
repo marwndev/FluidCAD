@@ -30,16 +30,29 @@
 
 /* Overlaid, the frame is a two-row grid whose height comes from what it
    holds: one pad above the copy, the same pad between the copy and the
-   switcher, the same again below. The scene fills the whole frame regardless
-   — an absolutely positioned child resolves against the padding box. */
-@media (min-width: 1000px) {
+   switcher, and a deeper foot below — the scene has to reach the page
+   ground somewhere, and that band is the only place it can do it without
+   crossing the buttons. The scene fills the whole frame regardless — an
+   absolutely positioned child resolves against the padding box. */
+@media (min-width: 1240px) {
+  .hero {
+    /* The landing is inside the frame now. What is left out here is the
+       plain ground the dissolve arrives on, held before the next section
+       changes the colour under it. */
+    padding-bottom: clamp(1.75rem, 1rem + 2vh, 3rem);
+  }
+
   .frame {
     --hero-pad: clamp(2rem, 1.2rem + 2vh, 3.25rem);
+    /* The room under the switcher, and the one measurement the fade is hung
+       from: everything below the buttons is exactly this tall, whatever the
+       headline does to the row above. */
+    --hero-foot: clamp(3.25rem, 2rem + 3vh, 5rem);
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(21rem, 32vw, 29rem);
     grid-template-rows: auto auto;
     row-gap: var(--hero-pad);
-    padding-block: var(--hero-pad);
+    padding-block: var(--hero-pad) var(--hero-foot);
     padding-inline: 0 var(--fc-gutter);
     min-height: clamp(420px, 56vh, 580px);
   }
@@ -272,7 +285,7 @@
   padding-inline: var(--fc-gutter);
 }
 
-@media (min-width: 1000px) {
+@media (min-width: 1240px) {
   .switcher {
     /* Left column, second row: clear of the copy, one pad below it. */
     grid-column: 1;
@@ -283,6 +296,9 @@
   }
 }
 
+/* Dashed until it is the one running, solid once it is: the switcher takes
+   the drafting convention where a dashed outline is construction and a solid
+   one is the geometry. Both are 1px, so picking one moves nothing. */
 .chip {
   display: flex;
   align-items: center;
@@ -290,7 +306,7 @@
   padding: 0.7rem 1rem 0.75rem;
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px dashed var(--fc-line-strong);
   border-radius: var(--fc-radius);
   cursor: pointer;
   font: inherit;
@@ -301,10 +317,12 @@
 
 .chip:hover {
   background: var(--fc-bg-sunken);
+  border-color: var(--fc-ink-faint);
 }
 
 .chip[aria-pressed='true'] {
   background: var(--fc-live-wash);
+  border-style: solid;
   border-color: var(--fc-live-edge);
 }
 
@@ -313,19 +331,26 @@
   outline-offset: 2px;
 }
 
-/* A render of the part, not an icon: the button shows what it switches to. */
+/* A render of the part, not an icon: the button shows what it switches to.
+   Grey and held back until it is the one on screen, when its own colour
+   comes back — the switcher says which part is live the way the viewport
+   does. The dimming stops at the image: carrying it on the whole button
+   would take the blurb under 4.5:1 on the light ground. */
 .chipThumb {
   flex: none;
   width: 3.25rem;
   height: 3.25rem;
   object-fit: contain;
-  opacity: 0.85;
-  transition: opacity var(--fc-quick) var(--fc-ease);
+  opacity: 0.8;
+  filter: grayscale(1);
+  transition: opacity var(--fc-quick) var(--fc-ease),
+    filter var(--fc-quick) var(--fc-ease);
 }
 
 .chip:hover .chipThumb,
 .chip[aria-pressed='true'] .chipThumb {
   opacity: 1;
+  filter: grayscale(0);
 }
 
 .chipText {
