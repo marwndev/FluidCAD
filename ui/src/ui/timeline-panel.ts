@@ -1,5 +1,5 @@
 import type { SceneObjectRender } from '../types';
-import { findActiveObject, findEnclosingPartRow, rollbackScopeIds, isRollbackViewTruncated } from '../helpers/scene-utils';
+import { findActiveObject, findEnclosingPartRow, rollbackScopeIds, isRollbackViewTruncated, isHiddenTimelineRow } from '../helpers/scene-utils';
 import type { EngineClient } from '../engine-client';
 import { ICON_CIRCLE_CHECK, ICON_REFRESH, ICON_CHEVRON_RIGHT, ICON_DOTS_VERTICAL, ICON_CHECK, ICON_ALERT_DOT, ICON_PAUSE, ICON_PENCIL, ICON_ADJUSTMENTS, ICON_TRASH } from './icons';
 import { resolveIconName, ICON_IMG_FALLBACK } from './object-icons';
@@ -15,17 +15,12 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * Objects the scene carries but the timeline never lists: a lazy select's
- * reference holder, a lazy vertex's anchor holder (`sel.center()` inside
- * `connector(…)`), and the internal inputs a statement builds for itself
- * (the plane behind `sketch('xy', …)`) — they have no statement of their own,
- * so a row would offer navigation and edits that belong to the statement they
- * serve. Rows keep their scene index either way, so rollback targets and the
- * edit dialogs' row lookups are unaffected.
+ * Objects the scene carries but the timeline never lists. Rows keep their
+ * scene index either way, so rollback targets and the edit dialogs' row
+ * lookups are unaffected. The rule lives in scene-utils: a replaying host
+ * walks the same set.
  */
-function isHiddenRow(obj: SceneObjectRender): boolean {
-  return obj.uniqueType === 'lazy-select' || obj.uniqueType === 'lazy-vertex' || obj.internal === true;
-}
+const isHiddenRow = isHiddenTimelineRow;
 
 /**
  * Child rows a part folds into their own sub-container instead of listing
@@ -50,6 +45,35 @@ const PART_GROUP_KINDS: readonly PartGroupKind[] = [
 
 function partGroupOf(obj: SceneObjectRender): PartGroupKind | undefined {
   return PART_GROUP_KINDS.find((kind) => obj.type === kind.type);
+}
+
+/**
+ * Which of the rail's sections a host mounts. Both default to true — the
+ * desktop app and the standalone viewer show the full rail. A host that
+ * embeds the rail as a *display* of the build (a docs page, a marketing
+ * hero) can drop the chrome that only makes sense when the rail is the
+ * primary navigation, leaving the feature rows alone on the surface.
+ *
+ * Hidden sections are built but never mounted, so every update path stays
+ * uniform whatever the host asked for.
+ */
+export interface TimelinePanelOptions {
+  /** The "History" accordion header: collapse toggle, feature count, overflow menu. */
+  header?: boolean;
+  /** The "Shapes" accordion below the feature rows. */
+  shapes?: boolean;
+  /**
+   * The per-row rebuild marks (cached vs rebuilt this render). They answer a
+   * question only someone editing the model is asking; a host showing the
+   * tree as a picture of the build turns them off.
+   */
+  status?: boolean;
+  /**
+   * Nested rows — a sketch's own primitives, a part's features. Off, every
+   * container reads as a single row for the statement that wrote it, which is
+   * the shape of the file rather than the shape of the scene.
+   */
+  children?: boolean;
 }
 
 export class TimelinePanel {
@@ -139,6 +163,8 @@ export class TimelinePanel {
   private activeDropdown: HTMLDivElement | null = null;
   private dropdownCleanup: (() => void) | null = null;
   private showBuildTimings = false;
+  private readonly showStatusMarks: boolean;
+  private readonly showChildren: boolean;
   private historyTotalLabel!: HTMLSpanElement;
   private hoverPopover: HTMLDivElement | null = null;
 
@@ -152,7 +178,10 @@ export class TimelinePanel {
     onSetShapeTransparency: (shapeId: string, opacity: number) => void,
     getShapeTransparency: (shapeId: string) => number,
     onResetAllTransparency: () => void,
+    options: TimelinePanelOptions = {},
   ) {
+    this.showStatusMarks = options.status !== false;
+    this.showChildren = options.children !== false;
     this.panel = document.createElement('div');
     // Docked below the host chrome (--fluidcad-chrome-top) with breathing room.
     this.panel.className = 'absolute left-[calc(var(--fluidcad-editor-width,0px)+1.5rem)] top-[calc(var(--fluidcad-chrome-top,104px)+12px)] bottom-6 w-[220px] z-[99] flex flex-col gap-1 select-none hidden';
@@ -172,7 +201,9 @@ export class TimelinePanel {
       <span data-ref="history-total" class="text-xs text-base-content/40 tabular-nums hidden"></span>
       <button data-ref="history-dots" class="ml-auto btn btn-ghost btn-square btn-xs text-base-content/40 hover:text-base-content/70 shrink-0">${ICON_DOTS_VERTICAL}</button>
     `;
-    this.contentWrapper.appendChild(timelineHeader);
+    if (options.header !== false) {
+      this.contentWrapper.appendChild(timelineHeader);
+    }
     this.historyTotalLabel = timelineHeader.querySelector<HTMLSpanElement>('[data-ref="history-total"]')!;
     const historyDotsBtn = timelineHeader.querySelector<HTMLButtonElement>('[data-ref="history-dots"]')!;
     historyDotsBtn.addEventListener('click', (e) => {
@@ -202,9 +233,10 @@ export class TimelinePanel {
       getShapeTransparency,
       onResetAllTransparency,
     );
-    this.contentWrapper.appendChild(this.shapesPanel.header);
-    this.contentWrapper.appendChild(this.shapesPanel.body);
-
+    if (options.shapes !== false) {
+      this.contentWrapper.appendChild(this.shapesPanel.header);
+      this.contentWrapper.appendChild(this.shapesPanel.body);
+    }
   }
 
   update(sceneObjects: SceneObjectRender[], rollbackStop: number, rollbackScopePartId: string | null = null): void {
@@ -370,8 +402,9 @@ export class TimelinePanel {
 
       // A hide-children container (e.g. a repeat) shows as a single leaf row.
       // Its rollback target is its last descendant, so clicking it previews
-      // the scene after the whole feature has executed.
-      const hidesChildren = obj.hideChildren === true;
+      // the scene after the whole feature has executed. A host that asked for
+      // no nesting treats every container that way.
+      const hidesChildren = obj.hideChildren === true || !this.showChildren;
       const hasChildren = !hidesChildren && obj.id != null && parentIds.has(obj.id);
       const isCollapsed = obj.id != null && this.collapsedIds.has(obj.id);
       const childHasError = obj.id != null && childErrorByParent.get(obj.id) === true;
@@ -705,9 +738,12 @@ export class TimelinePanel {
     const statusIconClass = showDuration
       ? 'shrink-0 text-base-content/40 [&>svg]:w-4 [&>svg]:h-4'
       : 'ml-auto shrink-0 text-base-content/40 [&>svg]:w-4 [&>svg]:h-4';
-    const statusIcon = obj.fromCache
-      ? `<span class="${statusIconClass}">${ICON_CIRCLE_CHECK}</span>`
-      : `<span class="${statusIconClass}">${ICON_REFRESH}</span>`;
+    let statusIcon = '';
+    if (this.showStatusMarks) {
+      statusIcon = obj.fromCache
+        ? `<span class="${statusIconClass}">${ICON_CIRCLE_CHECK}</span>`
+        : `<span class="${statusIconClass}">${ICON_REFRESH}</span>`;
+    }
 
     const activeDot = isActivePart
       ? '<span class="ml-0.5 w-1.5 h-1.5 rounded-full bg-primary shrink-0" title="Active part — new features land inside its body"></span>'

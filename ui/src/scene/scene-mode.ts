@@ -33,7 +33,10 @@ export class SceneModeManager {
     this.setupDefaultAxes();
     this.setupGrid(Z_UP);
 
-    viewerSettings.subscribe(() => this.applyGridVisibility());
+    viewerSettings.subscribe(() => {
+      this.applyGridVisibility();
+      this.applyAxesVisibility();
+    });
 
     // Rebuild grid when theme changes so grid color updates
     onThemeChange(() => this.rebuildGrid());
@@ -202,13 +205,22 @@ export class SceneModeManager {
   private setupDefaultAxes(): void {
     const axes = new AxesHelper(1000);
     axes.name = 'defaultAxesHelper';
+    axes.visible = viewerSettings.current.showAxes;
     this.ctx.scene.add(axes);
   }
 
   private showDefaultAxes(): void {
     this.removeByName('sketchAxesHelper');
     const axes = this.ctx.scene.getObjectByName('defaultAxesHelper');
-    if (axes) axes.visible = true;
+    if (axes) axes.visible = viewerSettings.current.showAxes;
+  }
+
+  private applyAxesVisibility(): void {
+    for (const name of ['defaultAxesHelper', 'sketchAxesHelper']) {
+      const axes = this.ctx.scene.getObjectByName(name);
+      if (axes) axes.visible = viewerSettings.current.showAxes;
+    }
+    this.ctx.requestRender();
   }
 
   private showSketchAxes(plane: PlaneData): void {

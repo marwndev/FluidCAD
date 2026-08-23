@@ -1,0 +1,224 @@
+/* The instrument is the hero. The viewer fills the width, the copy is set on
+   top of it at the right, and the model slides left so the two never meet. */
+
+.hero {
+  background: var(--fc-bg);
+  padding-bottom: clamp(2.5rem, 1.5rem + 3vw, 4.5rem);
+}
+
+.frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.25rem, 3vw, 2rem);
+  padding-block: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.viewportLayer {
+  order: 2;
+  width: 100%;
+  height: min(58vh, 460px);
+}
+
+.copy {
+  order: 1;
+  padding-inline: var(--fc-gutter);
+  max-width: 46rem;
+}
+
+@media (min-width: 1000px) {
+  .frame {
+    display: block;
+    height: clamp(480px, 66vh, 720px);
+    padding-block: 0;
+  }
+
+  .viewportLayer {
+    position: absolute;
+    inset: 0;
+    height: auto;
+  }
+
+  /* In flow inside the frame, pushed right — it lands on the viewport
+     without taking the pointer away from the whole scene. */
+  .copy {
+    position: relative;
+    z-index: var(--fc-z-raised);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 100%;
+    width: clamp(21rem, 32vw, 29rem);
+    max-width: none;
+    margin-left: auto;
+    padding-inline: 0 var(--fc-gutter);
+  }
+}
+
+/* ===== Copy ===== */
+
+.title {
+  margin: 0 0 1.1rem;
+  font-size: clamp(1.95rem, 1.35rem + 2.4vw, 3.25rem);
+  font-weight: 700;
+  line-height: 1.03;
+  letter-spacing: -0.03em;
+  color: var(--fc-ink);
+  animation: rise 620ms var(--fc-ease) both;
+}
+
+.sub {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fc-step-1);
+  line-height: 1.55;
+  color: var(--fc-ink-muted);
+  text-wrap: pretty;
+  animation: rise 620ms var(--fc-ease) 80ms both;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+  animation: rise 620ms var(--fc-ease) 160ms both;
+}
+
+.primary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  height: 2.875rem;
+  padding-inline: 1.4rem;
+  border-radius: var(--fc-radius);
+  font-size: var(--fc-step-0);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  text-decoration: none !important;
+  transition: background var(--fc-quick) var(--fc-ease),
+    border-color var(--fc-quick) var(--fc-ease), color var(--fc-quick) var(--fc-ease);
+}
+
+.primary {
+  background: var(--fc-live);
+  color: var(--fc-live-ink) !important;
+  border: 1px solid transparent;
+}
+
+.primary:hover {
+  background: var(--fc-live-hover);
+}
+
+.secondary {
+  border: 1px solid var(--fc-line-strong);
+  color: var(--fc-ink) !important;
+  background: transparent;
+}
+
+.secondary:hover {
+  border-color: var(--fc-ink-faint);
+  background: var(--fc-bg-sunken);
+}
+
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 2px solid var(--fc-live);
+  outline-offset: 2px;
+}
+
+/* ===== Server-rendered / no-JS stand-in ===== */
+
+.fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fallback img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+/* ===== Model switcher ===== */
+
+.switcher {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.5rem;
+  max-width: 1440px;
+  margin: clamp(1rem, 2vw, 1.5rem) auto 0;
+  padding-inline: var(--fc-gutter);
+}
+
+.chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.8rem 1rem 0.9rem;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--fc-radius);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background var(--fc-quick) var(--fc-ease),
+    border-color var(--fc-quick) var(--fc-ease);
+}
+
+.chip:hover {
+  background: var(--fc-bg-sunken);
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--fc-live-wash);
+  border-color: var(--fc-live-edge);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--fc-live);
+  outline-offset: 2px;
+}
+
+.chipLabel {
+  font-size: var(--fc-step-0);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fc-ink);
+}
+
+.chip[aria-pressed='true'] .chipLabel {
+  color: var(--fc-live);
+}
+
+.chipBlurb {
+  font-size: var(--fc-step--1);
+  line-height: 1.45;
+  color: var(--fc-ink-muted);
+}
+
+/* ===== Motion ===== */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title,
+  .sub,
+  .actions {
+    animation: none;
+  }
+}
