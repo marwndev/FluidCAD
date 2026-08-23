@@ -34,6 +34,7 @@ import {
   ICON_PENCIL,
   ICON_TRASH,
 } from './icons';
+import { RAIL_PANEL_CLASS } from './rail-styles';
 
 const SECTION_HEADER = 'flex items-center gap-2 px-3 py-2 panel-bg border border-base-content/10 rounded-md cursor-pointer select-none shrink-0';
 
@@ -111,7 +112,7 @@ export class PartsPanel {
     // logo and file name for both rails.
     // Docked like the part-design timeline: right of the editor pane
     // (--fluidcad-editor-width) and below the host chrome (--fluidcad-chrome-top).
-    this.panel.className = 'absolute left-[calc(var(--fluidcad-editor-width,0px)+1.5rem)] top-[calc(var(--fluidcad-chrome-top,104px)+12px)] bottom-6 w-[220px] z-[99] flex flex-col gap-1 select-none hidden';
+    this.panel.className = RAIL_PANEL_CLASS;
     container.appendChild(this.panel);
 
     const partsHeader = document.createElement('div');

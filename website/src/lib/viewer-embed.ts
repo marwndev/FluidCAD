@@ -118,6 +118,14 @@ export class ViewerEmbed {
     this.post({type: 'set-view-offset', x, y});
   }
 
+  /**
+   * Room the page has claimed inside the frame for its own overlays. The
+   * scene keeps the whole frame; only the viewer's floating panels move.
+   */
+  setPanelInset(inset: {top?: number; bottom?: number}): void {
+    this.post({type: 'set-panel-inset', ...inset});
+  }
+
   /** Scene furniture: the ground grid and the world axis lines. */
   setSettings(settings: {grid?: boolean; axes?: boolean}): void {
     this.post({type: 'set-settings', ...settings});

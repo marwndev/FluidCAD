@@ -4,6 +4,7 @@ import type { EngineClient } from '../engine-client';
 import { ICON_CIRCLE_CHECK, ICON_REFRESH, ICON_CHEVRON_RIGHT, ICON_DOTS_VERTICAL, ICON_CHECK, ICON_ALERT_DOT, ICON_PAUSE, ICON_PENCIL, ICON_ADJUSTMENTS, ICON_TRASH } from './icons';
 import { resolveIconName, ICON_IMG_FALLBACK } from './object-icons';
 import { ShapesPanel } from './shapes-panel';
+import { RAIL_PANEL_CLASS } from './rail-styles';
 
 const SECTION_HEADER = 'flex items-center gap-2 px-3 py-2 panel-bg border border-base-content/10 rounded-md cursor-pointer select-none shrink-0';
 
@@ -184,7 +185,7 @@ export class TimelinePanel {
     this.showChildren = options.children !== false;
     this.panel = document.createElement('div');
     // Docked below the host chrome (--fluidcad-chrome-top) with breathing room.
-    this.panel.className = 'absolute left-[calc(var(--fluidcad-editor-width,0px)+1.5rem)] top-[calc(var(--fluidcad-chrome-top,104px)+12px)] bottom-6 w-[220px] z-[99] flex flex-col gap-1 select-none hidden';
+    this.panel.className = RAIL_PANEL_CLASS;
     container.appendChild(this.panel);
     this.applyPanelWidth();
 

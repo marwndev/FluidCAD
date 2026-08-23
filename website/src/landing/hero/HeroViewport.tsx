@@ -21,6 +21,8 @@ type Props = {
   viewShiftX: number;
   /** Pixels to lift the model, clear of the band the page fades out. */
   viewShiftY: number;
+  /** Room the page occupies inside the frame — the rail docks clear of it. */
+  panelInset: {top: number; bottom: number};
   className?: string;
 };
 
@@ -44,7 +46,7 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export default function HeroViewport({model, withTimeline, viewShiftX, viewShiftY, className}: Props) {
+export default function HeroViewport({model, withTimeline, viewShiftX, viewShiftY, panelInset, className}: Props) {
   const {siteConfig} = useDocusaurusContext();
   const {colorMode} = useColorMode();
   const {fluidcadViewerUrl} = siteConfig.customFields as {fluidcadViewerUrl: string};
@@ -59,6 +61,8 @@ export default function HeroViewport({model, withTimeline, viewShiftX, viewShift
   modelRef.current = model;
   const shiftRef = useRef({x: viewShiftX, y: viewShiftY});
   shiftRef.current = {x: viewShiftX, y: viewShiftY};
+  const insetRef = useRef(panelInset);
+  insetRef.current = panelInset;
 
   const [supported, setSupported] = useState<boolean | null>(null);
   const [booted, setBooted] = useState(false);
@@ -149,6 +153,7 @@ export default function HeroViewport({model, withTimeline, viewShiftX, viewShift
       // Re-assert the offset per scene: a new model brings a new fit, and an
       // assembly swaps the whole camera rig.
       embed.setViewOffset(shiftRef.current.x, shiftRef.current.y);
+      embed.setPanelInset(insetRef.current);
       clearReplayTimer();
       if (modelRef.current.replay && !releasedRef.current && !prefersReducedMotion()) {
         replayTimer.current = setTimeout(() => {
@@ -200,8 +205,9 @@ export default function HeroViewport({model, withTimeline, viewShiftX, viewShift
   useEffect(() => {
     if (readyEpoch > 0) {
       embedRef.current?.setViewOffset(viewShiftX, viewShiftY);
+      embedRef.current?.setPanelInset(panelInset);
     }
-  }, [viewShiftX, viewShiftY, readyEpoch, phase]);
+  }, [viewShiftX, viewShiftY, panelInset, readyEpoch, phase]);
 
   // Hovering is reading: hold the build where it is. Grabbing the model is
   // taking over: stop the replay and hand the scene back whole.

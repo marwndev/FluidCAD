@@ -11,6 +11,9 @@ import styles from './Hero.module.css';
 const OVERLAY_MIN_WIDTH = 1000;
 /** The feature rail's own footprint inside the frame: 1.5rem inset + 220px. */
 const RAIL_CLEARANCE_PX = 268;
+/** The rail's own top padding plus a row's leading, so row one sits on the
+ *  headline's first line rather than the top of its line box. */
+const RAIL_ROW_LEAD_PX = 18;
 
 export default function Hero() {
   const [activeId, setActiveId] = useState(HERO_MODELS[0].id);
@@ -25,9 +28,11 @@ export default function Hero() {
     () => typeof window !== 'undefined' && window.matchMedia(`(min-width: ${OVERLAY_MIN_WIDTH}px)`).matches,
   );
   const [shift, setShift] = useState({x: 0, y: 0});
+  const [inset, setInset] = useState({top: 0, bottom: 0});
 
-  // The model is centred in the room left over between the feature rail, the
-  // copy and the switcher, so nothing the page draws lands on the geometry.
+  // Everything the frame shares with the page is measured, not guessed: the
+  // model is centred in the room left between the rail, the copy and the
+  // switcher, and the rail is docked to the same band the copy occupies.
   const measure = useCallback((isOverlaid: boolean) => {
     const frame = frameRef.current;
     const copy = copyRef.current;
@@ -37,15 +42,26 @@ export default function Hero() {
     }
     if (!isOverlaid) {
       setShift({x: 0, y: 0});
+      setInset({top: 0, bottom: 0});
       return;
     }
     const frameBox = frame.getBoundingClientRect();
-    const clearCentre = (RAIL_CLEARANCE_PX + (copy.getBoundingClientRect().left - frameBox.left)) / 2;
+    const copyBox = copy.getBoundingClientRect();
+    const switcherBox = switcher.getBoundingClientRect();
+    const clearCentre = (RAIL_CLEARANCE_PX + (copyBox.left - frameBox.left)) / 2;
     setShift({
       x: Math.max(0, Math.round(frameBox.width / 2 - clearCentre)),
       // Half the band the switcher occupies: lifting by that much re-centres
       // the model in what is left of the frame.
-      y: Math.round(switcher.getBoundingClientRect().height / 2),
+      y: Math.round(switcherBox.height / 2),
+    });
+    // The rail starts on the headline's line and stops above the switcher, so
+    // the two columns of chrome read as one band across the hero.
+    const title = copy.querySelector('h1');
+    const titleTop = (title ?? copy).getBoundingClientRect().top - frameBox.top;
+    setInset({
+      top: Math.max(0, Math.round(titleTop - RAIL_ROW_LEAD_PX)),
+      bottom: Math.max(0, Math.round(frameBox.bottom - switcherBox.top)),
     });
   }, []);
 
@@ -80,6 +96,7 @@ export default function Hero() {
               withTimeline={overlaid}
               viewShiftX={shift.x}
               viewShiftY={shift.y}
+              panelInset={inset}
             />
           )}
         </BrowserOnly>
