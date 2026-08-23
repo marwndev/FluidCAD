@@ -49,14 +49,25 @@
                    does to the row heights, so it is the only anchor the fade
                    needs to find them. Unset in the stacked layout, where the
                    switcher sits under the scene rather than inside it.
-     --fade-rise   how far up the scene the dissolve reaches.
+     --hero-band   the whole of what the page has claimed down there: the
+                   switcher and that room together, measured and handed over
+                   by the frame.
 
    The ramp is still eased rather than linear — a straight alpha ramp reads as
    a visible band edge — but it now spends its last third under the buttons
    instead of through them: the scene is a fifth present at their bottom rule
    and only reaches the page ground below it. The final stop lands short of
-   the scene's own edge, so the clip has nothing left to cut. */
+   the scene's own edge, so the clip has nothing left to cut.
+
+   Its length is taken from the claimed band and nothing else. Off the
+   viewport it ran a third of the way up the model, and a wash of page ground
+   over geometry reads as fog on the edges rather than as depth: the lines are
+   still drawn at full resolution, they are just being lightened. Measured
+   from the band instead, the ramp begins above the buttons and is done below
+   them, and the model sits in clear air. */
 .fade {
+  /* Stacked, the switcher is under the scene rather than in it, nothing is
+     claimed, and the ramp is simply a share of the scene's own foot. */
   --fade-rise: clamp(11rem, 34vh, 20rem);
   --fade-land: calc(var(--hero-foot, 0px) * 0.42);
   position: absolute;
@@ -74,6 +85,12 @@
     color-mix(in oklab, var(--fc-bg) 87%, transparent) 85%,
     var(--fc-bg) calc(100% - var(--fade-land))
   );
+}
+
+/* Overlaid: half again the claimed band, which puts the start of the ramp a
+   little above the buttons and its landing a little below them. */
+.banded {
+  --fade-rise: calc(var(--hero-band) * 1.55);
 }
 
 @media (prefers-reduced-motion: reduce) {

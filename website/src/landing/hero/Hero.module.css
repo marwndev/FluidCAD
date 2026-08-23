@@ -48,10 +48,15 @@
        from: everything below the buttons is exactly this tall, whatever the
        headline does to the row above. */
     --hero-foot: clamp(3.25rem, 2rem + 3vh, 5rem);
+    /* Wider than the pad above the copy. The switcher is the one thing in
+       the frame that belongs to neither column — it has to read as its own
+       band, clear of the model in the scene above it and of the copy beside
+       it — so it gets its own measurement rather than the frame's. */
+    --hero-gap: clamp(2.75rem, 1.5rem + 3vh, 4.5rem);
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(21rem, 32vw, 29rem);
     grid-template-rows: auto auto;
-    row-gap: var(--hero-pad);
+    row-gap: var(--hero-gap);
     padding-block: var(--hero-pad) var(--hero-foot);
     padding-inline: 0 var(--fc-gutter);
     min-height: clamp(420px, 56vh, 580px);

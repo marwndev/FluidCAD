@@ -237,7 +237,14 @@ export default function HeroViewport({model, withTimeline, viewShiftX, viewShift
       ref={stageRef}
       className={`${styles.stage} ${className ?? ''}`}
       style={
-        {'--hero-shift-x': `${viewShiftX}px`, '--hero-shift-y': `${viewShiftY}px`} as React.CSSProperties
+        {
+          '--hero-shift-x': `${viewShiftX}px`,
+          '--hero-shift-y': `${viewShiftY}px`,
+          // The room the page has taken at the foot of the scene: the
+          // switcher and the band under it. The dissolve is measured from
+          // it, so it clears the controls without reaching the model.
+          '--hero-band': `${panelInset.bottom}px`,
+        } as React.CSSProperties
       }
       onPointerEnter={pause}
       onPointerLeave={resume}
@@ -263,7 +270,10 @@ export default function HeroViewport({model, withTimeline, viewShiftX, viewShift
         fetchPriority="high"
         decoding="async"
       />
-      <div className={styles.fade} aria-hidden="true" />
+      <div
+        className={`${styles.fade} ${panelInset.bottom > 0 ? styles.banded : ''}`}
+        aria-hidden="true"
+      />
     </div>
   );
 }

@@ -89,11 +89,17 @@ export default function Hero() {
     const switcherBox = switcher.getBoundingClientRect();
     const clearCentre = (RAIL_CLEARANCE_PX + (copyBox.left - frameBox.left)) / 2;
     const bottomBand = Math.max(0, frameBox.bottom - switcherBox.top);
+    // The switcher's own gap counts as claimed too. Only the lift uses it:
+    // the model is centred in what is left once the gap is spent, so it keeps
+    // that much air above the buttons instead of settling onto them. Growing
+    // the frame instead would not do it — the viewer fits the model to the
+    // frame, so a taller frame is only a bigger model in the same place.
+    const gap = parseFloat(getComputedStyle(frame).rowGap) || 0;
     setShift({
       x: Math.max(0, Math.round(frameBox.width / 2 - clearCentre)),
-      // Half the band the switcher occupies: lifting by that much re-centres
-      // the model in what is left of the frame.
-      y: Math.round(bottomBand / 2),
+      // Half of what the page has taken at the foot of the frame: lifting by
+      // that much re-centres the model in what is left of it.
+      y: Math.round((bottomBand + gap) / 2),
     });
     // The rail starts on the headline's line and stops above the switcher, so
     // the two columns of chrome read as one band across the hero.
