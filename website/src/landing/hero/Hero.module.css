@@ -48,18 +48,28 @@
        from: everything below the buttons is exactly this tall, whatever the
        headline does to the row above. */
     --hero-foot: clamp(3.25rem, 2rem + 3vh, 5rem);
-    /* Wider than the pad above the copy. The switcher is the one thing in
-       the frame that belongs to neither column — it has to read as its own
-       band, clear of the model in the scene above it and of the copy beside
-       it — so it gets its own measurement rather than the frame's. */
-    --hero-gap: clamp(2.75rem, 1.5rem + 3vh, 4.5rem);
+    /* Several times the pad above the copy, and it has to be. The switcher
+       is the one thing in the frame that belongs to neither column, so it
+       needs to read as its own band, clear of the model in the scene above
+       it and of the copy beside it. The viewer fits the model to the frame,
+       so most of what this opens is handed straight back as a bigger model:
+       about half of every pixel here survives as air. */
+    --hero-gap: clamp(5.5rem, 3rem + 6.5vh, 9rem);
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(21rem, 32vw, 29rem);
-    grid-template-rows: auto auto;
+    /* The scene row takes whatever the frame has over its content, so the
+       height below is a floor for the instrument rather than something the
+       copy and the switcher share out between them. */
+    grid-template-rows: minmax(0, 1fr) auto;
     row-gap: var(--hero-gap);
     padding-block: var(--hero-pad) var(--hero-foot);
     padding-inline: 0 var(--fc-gutter);
-    min-height: clamp(420px, 56vh, 580px);
+    /* Sized so the fold still shows the top of the section under it: the
+       navbar and the ground below the frame come off the same screen. The
+       ceiling is not about the fold — the viewer fits the model to the frame,
+       so past about this the model grows wider than the room between the rail
+       and the copy and starts arriving underneath the headline. */
+    min-height: clamp(34rem, 80vh, 50rem);
   }
 
   .viewportLayer {
@@ -73,6 +83,9 @@
   .copy {
     grid-column: 2;
     grid-row: 1;
+    /* Held at the top of its row: the row is the one that stretches, and the
+       rail docks to the headline's line, which must not move with it. */
+    align-self: start;
     position: relative;
     z-index: var(--fc-z-raised);
     width: auto;
