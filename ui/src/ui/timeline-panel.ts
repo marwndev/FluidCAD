@@ -326,8 +326,39 @@ export class TimelinePanel {
   private scrollPickedIntoView(): void {
     const el = this.timelineBody.querySelector<HTMLElement>('[data-picked="true"]');
     if (el) {
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      this.revealRow(el, true);
     }
+  }
+
+  /**
+   * Bring a row into view inside the panel, and nowhere else.
+   *
+   * Deliberately not `scrollIntoView`. That walks *every* scrolling ancestor,
+   * and when the timeline runs inside an embedded viewer those ancestors
+   * include the host document across the iframe boundary: a build replay
+   * stepping once a second drags the whole page back to the frame, so a
+   * reader who scrolls away is pulled to the top again and again. Moving the
+   * body's own `scrollTop` keeps the effect where it belongs.
+   *
+   * Rects rather than `offsetTop`: the row's offset parent is whatever
+   * happens to be positioned above it, which is not necessarily the body.
+   * The minimum-movement rule matches `block: 'nearest'`.
+   */
+  private revealRow(el: HTMLElement, smooth: boolean): void {
+    const view = this.timelineBody;
+    const viewRect = view.getBoundingClientRect();
+    const rowRect = el.getBoundingClientRect();
+    let delta = 0;
+    if (rowRect.top < viewRect.top) {
+      delta = rowRect.top - viewRect.top;
+    } else if (rowRect.bottom > viewRect.bottom) {
+      delta = rowRect.bottom - viewRect.bottom;
+    }
+    if (delta === 0) {
+      return;
+    }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    view.scrollTo({ top: view.scrollTop + delta, behavior: smooth && !reduced ? 'smooth' : 'auto' });
   }
 
   setShowBuildTimings(value: boolean): void {
@@ -563,7 +594,7 @@ export class TimelinePanel {
     if (scrollToCurrent) {
       const currentEl = this.timelineBody.querySelector<HTMLElement>('[data-current="true"]');
       if (currentEl) {
-        currentEl.scrollIntoView({ block: 'nearest' });
+        this.revealRow(currentEl, false);
       }
     }
   }
