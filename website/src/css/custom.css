@@ -130,31 +130,6 @@
   --docusaurus-highlighted-code-line-bg: oklch(69.3% 0.1647 254 / 0.14);
 }
 
-/* ---------------------------------------------------------------------
- * Legacy landing tokens — the not-yet-rebuilt sections below the hero
- * still read these. Delete each alias as its section moves to the tokens
- * above; the block should end up empty.
- * ------------------------------------------------------------------- */
-:root,
-[data-theme='dark'] {
-  --fluidcad-bg-primary: var(--fc-bg);
-  --fluidcad-bg-secondary: var(--fc-bg-sunken);
-  --fluidcad-bg-surface: var(--fc-bg-raised);
-  --fluidcad-text-primary: var(--fc-ink);
-  --fluidcad-text-secondary: var(--fc-ink-muted);
-  --fluidcad-text-tertiary: var(--fc-ink-faint);
-  --fluidcad-border: var(--fc-line);
-  --fluidcad-border-strong: var(--fc-line-strong);
-  --fluidcad-grid-line: var(--fc-live-wash);
-  --fluidcad-accent: var(--fc-live);
-  --fluidcad-accent-light: var(--fc-live-hover);
-  --fluidcad-accent-glow: var(--fc-live-wash);
-  --fluidcad-warm: var(--fc-picked);
-  --fluidcad-warm-deep: var(--fc-picked-ink);
-  --fluidcad-terminal-bg: var(--fc-bg-sunken);
-  --fluidcad-card-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
-}
-
 /* ===== Base ===== */
 
 body {
